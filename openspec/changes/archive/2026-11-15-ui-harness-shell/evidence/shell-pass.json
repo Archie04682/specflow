@@ -1,0 +1,144 @@
+{
+  "home1440": {
+    "scrollWidth": 1440,
+    "innerWidth": 1440,
+    "bodyOverflow": "hidden",
+    "panelWidth": "280px 1160px",
+    "shellDisplay": "grid",
+    "tabs": [
+      "Chat3",
+      "Flows3"
+    ],
+    "canvasScroll": {
+      "pageScrollable": false
+    }
+  },
+  "flowsCards": 3,
+  "editor": {
+    "title": "Standard feature",
+    "inspectorScrolls": true,
+    "canvasHeight": 716.5
+  },
+  "run": {
+    "title": "Harden the Pi adapter retry path",
+    "status": "Completed",
+    "streamItems": 21,
+    "statusbar": "Duration5m 00sNodes6/6Tokens19.2kCost$0.0360Last event11:39:07Ended",
+    "graphHeight": 742
+  },
+  "collapsed": {
+    "panelVisible": "hidden",
+    "toggleVisible": true,
+    "stored": "1",
+    "restoredVisible": "visible"
+  },
+  "home1024": {
+    "scrollWidth": 1024,
+    "innerWidth": 1024,
+    "bodyOverflow": "hidden",
+    "panelWidth": "248px 776px",
+    "shellDisplay": "grid"
+  },
+  "home768": {
+    "scrollWidth": 768,
+    "innerWidth": 768,
+    "bodyOverflow": "hidden",
+    "panelWidth": "248px minmax(0px, 1fr)",
+    "shellDisplay": "block"
+  },
+  "drawer768": {
+    "shellDisplay": "block",
+    "panelTransform": "matrix(1, 0, 0, 1, 0, 0)",
+    "scrim": true,
+    "active": "",
+    "afterEscape": {
+      "scrim": false,
+      "transform": "matrix(1, 0, 0, 1, -280, 0)"
+    }
+  },
+  "focus": {
+    "tag": "BUTTON",
+    "text": "New flow",
+    "outline": "2px solid rgb(122, 170, 255)"
+  },
+  "reducedMotion": {
+    "shell": "0s",
+    "newChat": "0s"
+  },
+  "run768": {
+    "scrollWidth": 768,
+    "innerWidth": 768,
+    "graphHeight": 269.1875,
+    "streamHeight": 460.8125
+  },
+  "editor768": {
+    "scrollWidth": 768,
+    "innerWidth": 768,
+    "canvasHeight": 295.765625,
+    "inspectorScrolls": true
+  },
+  "projectDialog": {
+    "title": "Project",
+    "inputValue": "/home/dev/specflow",
+    "focused": "project-dialog-path"
+  },
+  "contrast": [
+    {
+      "selector": ".catalog-row__meta",
+      "color": "rgb(139, 144, 150)",
+      "ratio": 5.35,
+      "fontSize": "11.5px"
+    },
+    {
+      "selector": ".catalog-section__title",
+      "color": "rgb(139, 144, 150)",
+      "ratio": 5.35,
+      "fontSize": "12px"
+    },
+    {
+      "selector": ".composer__hint",
+      "color": "rgb(139, 144, 150)",
+      "ratio": 4.87,
+      "fontSize": "12px"
+    },
+    {
+      "selector": ".view-header__subtitle",
+      "color": "rgb(139, 144, 150)",
+      "ratio": 5.67,
+      "fontSize": "12px"
+    },
+    null,
+    {
+      "selector": ".panel-tab:not([aria-selected=\"true\"])",
+      "color": "rgb(139, 144, 150)",
+      "ratio": 4.68,
+      "fontSize": "13px"
+    },
+    {
+      "selector": ".project-trigger__path",
+      "color": "rgb(139, 144, 150)",
+      "ratio": 5.35,
+      "fontSize": "10.5px"
+    },
+    {
+      "selector": ".catalog-row__title",
+      "color": "rgb(245, 246, 247)",
+      "ratio": 15.91,
+      "fontSize": "13px"
+    }
+  ],
+  "run1024": {
+    "scrollWidth": 1024,
+    "innerWidth": 1024
+  },
+  "editor1024": {
+    "scrollWidth": 1024,
+    "innerWidth": 1024
+  },
+  "flows768": {
+    "scrollWidth": 768,
+    "innerWidth": 768,
+    "drawerClosed": true
+  },
+  "errors": []
+}

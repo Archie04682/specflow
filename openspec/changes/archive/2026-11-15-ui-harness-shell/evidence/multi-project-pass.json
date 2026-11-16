@@ -1,0 +1,86 @@
+{
+  "home": {
+    "groups": [
+      "specflow (dev)",
+      "notes-app",
+      "specflow (work)"
+    ],
+    "active": "specflow (dev)",
+    "footer": "/home/dev/specflow"
+  },
+  "homeMetrics": {
+    "scrollWidth": 1440,
+    "innerWidth": 1440
+  },
+  "projectsDialog": {
+    "choices": [
+      "specflow · dev",
+      "notes-app",
+      "specflow · work"
+    ],
+    "active": "/home/dev/specflow"
+  },
+  "addProject": {
+    "projects": [
+      "/home/dev/specflow",
+      "/home/dev/notes-app",
+      "/home/dev/work/specflow",
+      "/home/dev/new-repo"
+    ],
+    "active": "/home/dev/new-repo",
+    "groups": [
+      "specflow (dev)",
+      "notes-app",
+      "specflow (work)",
+      "new-repo"
+    ]
+  },
+  "flows": {
+    "sections": [
+      "Flows in specflow (dev)",
+      "Flows in notes-app",
+      "Flows in specflow (work)"
+    ]
+  },
+  "noFlows": {
+    "selectorText": "No flows available",
+    "selectorDisabled": true,
+    "newFlow": "New flow",
+    "hint": "Create a flow to start a run.",
+    "hasSuggestions": false
+  },
+  "run": {
+    "activeStored": "/home/dev/specflow",
+    "title": "Harden the Pi adapter retry path",
+    "projects": [
+      "/home/dev/specflow",
+      "/home/dev/notes-app",
+      "/home/dev/work/specflow"
+    ],
+    "footer": "/home/dev/specflow"
+  },
+  "runMetrics": {
+    "scrollWidth": 1440,
+    "innerWidth": 1440
+  },
+  "editor": {
+    "title": "New flow",
+    "activeStored": "/home/dev/notes-app"
+  },
+  "home1024": {
+    "scrollWidth": 1024,
+    "innerWidth": 1024
+  },
+  "drawer768": {
+    "groups": [
+      "specflow (dev)",
+      "notes-app",
+      "specflow (work)"
+    ],
+    "scrollWidth": 768,
+    "innerWidth": 768,
+    "focused": "New chat",
+    "scrimAfterEscape": false
+  },
+  "errors": []
+}

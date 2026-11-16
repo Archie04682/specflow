@@ -1,0 +1,45 @@
+{
+  "skillsBefore": {
+    "trigger": "true",
+    "chips": [
+      "openspec-explore"
+    ],
+    "options": [
+      "openspec-explore",
+      "openspec-propose"
+    ]
+  },
+  "skillsAfter": {
+    "chips": [
+      "openspec-explore",
+      "openspec-propose"
+    ],
+    "hint": "Select one or more skills. Their instructions are combined in the node prompt."
+  },
+  "toolsAfter": {
+    "chips": [
+      "read",
+      "custom_tool"
+    ]
+  },
+  "saved": "Saved.",
+  "afterReload": {
+    "skillChips": [
+      "openspec-explore",
+      "openspec-propose"
+    ],
+    "toolChips": [
+      "read",
+      "custom_tool"
+    ]
+  },
+  "yaml": [
+    "      skills:",
+    "      tools:",
+    "        - read",
+    "        - custom_tool",
+    "      skill: openspec-propose",
+    "      skill: openspec-apply-change"
+  ],
+  "errors": []
+}

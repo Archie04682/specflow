@@ -1,0 +1,121 @@
+{
+  "home": {
+    "projects": [
+      {
+        "label": "specflow (dev)",
+        "expanded": "true"
+      },
+      {
+        "label": "notes-app",
+        "expanded": "false"
+      },
+      {
+        "label": "specflow (work)",
+        "expanded": "false"
+      }
+    ],
+    "leafLabels": [
+      "Chats",
+      "Flows"
+    ],
+    "tabs": 0,
+    "headerActions": [],
+    "settings": "Settings",
+    "chatRows": 5
+  },
+  "homeMetrics": {
+    "scrollWidth": 1440,
+    "innerWidth": 1440
+  },
+  "collapsed": {
+    "expanded": "false",
+    "leaves": 0
+  },
+  "expandedOther": {
+    "active": "/home/dev/notes-app",
+    "expanded": [
+      "true",
+      "true",
+      "false"
+    ],
+    "leafLabels": [
+      "Chats",
+      "Flows",
+      "Chats",
+      "Flows"
+    ]
+  },
+  "settings": {
+    "title": "Settings",
+    "projects": [
+      "specflow · dev",
+      "notes-app",
+      "specflow · work"
+    ],
+    "actions": [
+      "Remove specflow (dev) from the workbench",
+      "Remove notes-app from the workbench",
+      "Remove specflow (work) from the workbench"
+    ],
+    "afterRemove": {
+      "projects": [
+        "/home/dev/specflow",
+        "/home/dev/work/specflow"
+      ],
+      "listed": [
+        "specflow · dev",
+        "specflow · work"
+      ]
+    },
+    "treeAfterClose": [
+      "specflow (dev)",
+      "specflow (work)"
+    ]
+  },
+  "noFlows": {
+    "selector": {
+      "top": 474.59375,
+      "bottom": 504.59375,
+      "center": 489.59375,
+      "height": 30
+    },
+    "newFlow": {
+      "top": 474.59375,
+      "bottom": 504.59375,
+      "center": 489.59375,
+      "height": 30
+    },
+    "buttonCenter": 489.59375,
+    "spanCenter": 489.59375,
+    "iconCenter": 489.59375,
+    "selectorDisabled": true,
+    "label": "New flow",
+    "headerActions": []
+  },
+  "newFlowEditor": {
+    "title": "New flow",
+    "active": "/home/dev/notes-app",
+    "search": "?view=editor&project=%2Fhome%2Fdev%2Fnotes-app"
+  },
+  "newFlowClose": {
+    "heading": "New chat",
+    "search": ""
+  },
+  "oldFlowsLink": "New chat",
+  "home1024": {
+    "scrollWidth": 1024,
+    "innerWidth": 1024
+  },
+  "drawer768": {
+    "projects": [
+      "specflow (dev)",
+      "notes-app",
+      "specflow (work)"
+    ],
+    "settings": "Settings",
+    "scrollWidth": 768,
+    "innerWidth": 768,
+    "scrimAfterEscape": false
+  },
+  "errors": []
+}

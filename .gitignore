@@ -1,0 +1,35 @@
+# Local agent tooling and run state: present on disk, never published.
+# `.dsh/` holds this checkout's harness skills; `.specflow/` holds run journals
+# and worktrees. Both are recreated locally, so a clone works without them.
+.dsh/
+.specflow/
+
+# Frontend dependencies and local build output
+frontend/node_modules/
+frontend/dist/
+
+# Embedded frontend build output (the sentinel keeps go:embed valid on a fresh clone)
+backend/web/dist/*
+!backend/web/dist/.gitkeep
+
+# Go build artifacts
+/specflow
+*.test
+coverage.out
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Package manager store
+.pnpm-store/
+
+# Python bytecode (skills and helper scripts)
+__pycache__/
+*.pyc
+
+# OS and editor noise
+.DS_Store
+.idea/
+.vscode/

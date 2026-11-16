@@ -1,0 +1,291 @@
+{
+  "initial": {
+    "model": {
+      "tag": "SELECT",
+      "value": "default",
+      "options": [
+        {
+          "text": "Inherit workflow default",
+          "value": ""
+        },
+        {
+          "text": "Explicit default",
+          "value": "default"
+        },
+        {
+          "text": "DeepSeek V4.1 Flash · reasoning",
+          "value": "deepseek/deepseek-flash"
+        }
+      ]
+    },
+    "thinking": {
+      "tag": "SELECT",
+      "value": "high",
+      "disabled": false,
+      "options": [
+        "Inherit workflow default",
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "tools": [
+      {
+        "name": "readRead files from the working directory.",
+        "checked": false
+      },
+      {
+        "name": "writeCreate or overwrite a file.",
+        "checked": false
+      },
+      {
+        "name": "editApply exact text replacements to a file.",
+        "checked": false
+      },
+      {
+        "name": "grepSearch file contents with a pattern.",
+        "checked": false
+      },
+      {
+        "name": "findFind files by name or glob.",
+        "checked": false
+      },
+      {
+        "name": "lsList directory contents.",
+        "checked": false
+      },
+      {
+        "name": "bashRun a shell command.",
+        "checked": false
+      }
+    ],
+    "variables": [
+      "{{objective}}",
+      "{{change}}",
+      "{{run_id}}",
+      "{{workdir}}"
+    ],
+    "prompt": "The run objective is: {{objective}}\nExplore the repository and that objective. Ask the operator when a\ndecision is needed.\n"
+  },
+  "afterModel": {
+    "model": {
+      "tag": "SELECT",
+      "value": "deepseek/deepseek-flash",
+      "options": [
+        {
+          "text": "Inherit workflow default",
+          "value": ""
+        },
+        {
+          "text": "Explicit default",
+          "value": "default"
+        },
+        {
+          "text": "DeepSeek V4.1 Flash · reasoning",
+          "value": "deepseek/deepseek-flash"
+        }
+      ]
+    },
+    "thinking": {
+      "tag": "SELECT",
+      "value": "high",
+      "disabled": false,
+      "options": [
+        "Inherit workflow default",
+        "off",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    "tools": [
+      {
+        "name": "readRead files from the working directory.",
+        "checked": false
+      },
+      {
+        "name": "writeCreate or overwrite a file.",
+        "checked": false
+      },
+      {
+        "name": "editApply exact text replacements to a file.",
+        "checked": false
+      },
+      {
+        "name": "grepSearch file contents with a pattern.",
+        "checked": false
+      },
+      {
+        "name": "findFind files by name or glob.",
+        "checked": false
+      },
+      {
+        "name": "lsList directory contents.",
+        "checked": false
+      },
+      {
+        "name": "bashRun a shell command.",
+        "checked": false
+      }
+    ],
+    "variables": [
+      "{{objective}}",
+      "{{change}}",
+      "{{run_id}}",
+      "{{workdir}}"
+    ],
+    "prompt": "The run objective is: {{objective}}\nExplore the repository and that objective. Ask the operator when a\ndecision is needed.\n"
+  },
+  "beforeSave": {
+    "model": {
+      "tag": "SELECT",
+      "value": "deepseek/deepseek-flash",
+      "options": [
+        {
+          "text": "Inherit workflow default",
+          "value": ""
+        },
+        {
+          "text": "Explicit default",
+          "value": "default"
+        },
+        {
+          "text": "DeepSeek V4.1 Flash · reasoning",
+          "value": "deepseek/deepseek-flash"
+        }
+      ]
+    },
+    "thinking": {
+      "tag": "SELECT",
+      "value": "high",
+      "disabled": false,
+      "options": [
+        "Inherit workflow default",
+        "off",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    "tools": [
+      {
+        "name": "readRead files from the working directory.",
+        "checked": true
+      },
+      {
+        "name": "writeCreate or overwrite a file.",
+        "checked": false
+      },
+      {
+        "name": "editApply exact text replacements to a file.",
+        "checked": false
+      },
+      {
+        "name": "grepSearch file contents with a pattern.",
+        "checked": false
+      },
+      {
+        "name": "findFind files by name or glob.",
+        "checked": false
+      },
+      {
+        "name": "lsList directory contents.",
+        "checked": false
+      },
+      {
+        "name": "bashRun a shell command.",
+        "checked": false
+      },
+      {
+        "name": "specflow_ask_extra",
+        "checked": true
+      }
+    ],
+    "variables": [
+      "{{objective}}",
+      "{{change}}",
+      "{{run_id}}",
+      "{{workdir}}"
+    ],
+    "prompt": "The run objective is: {{objective}}\nExplore the repository and that objective. Ask the operator when a\ndecision is needed.\n{{objective}}"
+  },
+  "saveStatus": "Saved.",
+  "afterReload": {
+    "model": {
+      "tag": "SELECT",
+      "value": "deepseek/deepseek-flash",
+      "options": [
+        {
+          "text": "Inherit workflow default",
+          "value": ""
+        },
+        {
+          "text": "Explicit default",
+          "value": "default"
+        },
+        {
+          "text": "DeepSeek V4.1 Flash · reasoning",
+          "value": "deepseek/deepseek-flash"
+        }
+      ]
+    },
+    "thinking": {
+      "tag": "SELECT",
+      "value": "high",
+      "disabled": false,
+      "options": [
+        "Inherit workflow default",
+        "off",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    "tools": [
+      {
+        "name": "readRead files from the working directory.",
+        "checked": true
+      },
+      {
+        "name": "writeCreate or overwrite a file.",
+        "checked": false
+      },
+      {
+        "name": "editApply exact text replacements to a file.",
+        "checked": false
+      },
+      {
+        "name": "grepSearch file contents with a pattern.",
+        "checked": false
+      },
+      {
+        "name": "findFind files by name or glob.",
+        "checked": false
+      },
+      {
+        "name": "lsList directory contents.",
+        "checked": false
+      },
+      {
+        "name": "bashRun a shell command.",
+        "checked": false
+      },
+      {
+        "name": "specflow_ask_extra",
+        "checked": true
+      }
+    ],
+    "variables": [
+      "{{objective}}",
+      "{{change}}",
+      "{{run_id}}",
+      "{{workdir}}"
+    ],
+    "prompt": "The run objective is: {{objective}}\nExplore the repository and that objective. Ask the operator when a\ndecision is needed.\n{{objective}}"
+  },
+  "errors": []
+}
