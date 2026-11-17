@@ -75,6 +75,7 @@ export function AskCard({ question, ask, busy, onSubmit }: AskCardProps) {
           {options.map((option) => (
             <Button
               key={option}
+              className="interaction-card__option"
               variant="secondary"
               disabled={busy}
               onClick={() => void onSubmit({ questionId: question.id, value: option })}

@@ -1917,17 +1917,28 @@ select.input {
 
 /* ------------------------------------------------------------ interaction */
 
+/* The dock may take at most half the activity column, less half of the 12px
+   pane gap, so the Activity window keeps at least the other half. The cap has
+   to sit here: a percentage resolves against `.run-side`, which has a definite
+   height, while the card's own parent would be content-sized. */
 .interaction-dock {
-  flex: 0 0 auto;
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(50% - 6px);
 }
 
 .interaction-card {
   position: relative;
   display: flex;
+  flex: 0 1 auto;
   flex-direction: column;
   gap: 10px;
+  min-height: 0;
   padding: 16px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: var(--bg-panel);
   border: 1px solid var(--border-strong);
   border-radius: 14px;
@@ -1964,6 +1975,18 @@ select.input {
 .interaction-card__actions--column {
   flex-direction: column;
   align-items: stretch;
+}
+
+/* An option is a value the operator reads and compares before choosing, not a
+   one-word command: its label wraps onto as many lines as it needs, stays left
+   aligned, and breaks long unbroken tokens instead of overflowing the card. */
+.interaction-card__option {
+  justify-content: flex-start;
+  padding: 8px 12px;
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* ---------------------------------------------------------------- drawer */

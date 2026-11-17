@@ -42,6 +42,25 @@ describe("AskCard", () => {
     expect(onSubmit).toHaveBeenCalledWith({ questionId: "q1", value: "API tokens" });
   });
 
+  it("shows a long option's whole label and sends it unchanged", async () => {
+    const user = userEvent.setup();
+    const longOption =
+      "User-global + project-local behind explicit opt-in with a pinned content " +
+      "hash — the project copy wins after the operator confirms it once";
+    const onSubmit = setup({
+      kind: "select",
+      title: "Plugin trust model",
+      options: ["User-global only", longOption],
+    });
+
+    const option = screen.getByRole("button", { name: longOption });
+    expect(option).toHaveClass("interaction-card__option");
+    expect(option.textContent).toBe(longOption);
+
+    await user.click(option);
+    expect(onSubmit).toHaveBeenCalledWith({ questionId: "q1", value: longOption });
+  });
+
   it("sends free text as the value", async () => {
     const user = userEvent.setup();
     const onSubmit = setup({ kind: "input", placeholder: "Type here" });
