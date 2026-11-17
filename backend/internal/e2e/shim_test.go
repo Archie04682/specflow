@@ -65,6 +65,20 @@ func writePiShim(t *testing.T, realBinary string, mode shimMode) (path, pidfile 
 	return path, pidfile
 }
 
+// writeArgEcho returns a stand-in for the real harness binary that prints each
+// argument on its own line. The host's echo cannot serve as one: uutils echo
+// answers --version with its own banner, so the forwarded argument would be
+// missing on a runner whose coreutils is not GNU.
+func writeArgEcho(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "arg-echo")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0o755); err != nil {
+		t.Fatalf("write arg echo: %v", err)
+	}
+	return path
+}
+
 // readShimArgs returns the arguments the shim received.
 func readShimArgs(t *testing.T, pidfile string) []string {
 	t.Helper()
@@ -81,7 +95,7 @@ func readShimArgs(t *testing.T, pidfile string) []string {
 }
 
 func TestPassShimExecsTheRealBinary(t *testing.T) {
-	shim, pidfile := writePiShim(t, "/bin/echo", shimPass)
+	shim, pidfile := writePiShim(t, writeArgEcho(t), shimPass)
 
 	output, err := exec.Command(shim, "--version").CombinedOutput()
 	if err != nil {
@@ -89,6 +103,9 @@ func TestPassShimExecsTheRealBinary(t *testing.T) {
 	}
 	if !strings.Contains(string(output), "--version") {
 		t.Fatalf("output = %q, want the forwarded argument", output)
+	}
+	if args := readShimArgs(t, pidfile); len(args) != 1 || args[0] != "--version" {
+		t.Fatalf("args = %v, want [--version]", args)
 	}
 
 	pid := readPID(t, pidfile)
