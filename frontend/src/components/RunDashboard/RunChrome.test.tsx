@@ -50,6 +50,67 @@ describe("RunControls", () => {
     expect(onResume).toHaveBeenCalledTimes(1);
   });
 
+  it("offers apply and discard for a folder run awaiting apply", async () => {
+    const user = userEvent.setup();
+    const onApply = vi.fn();
+    const onRequestDiscard = vi.fn();
+
+    render(
+      <RunControls
+        runStatus="completed"
+        pendingAction={null}
+        awaitingApply
+        onApply={onApply}
+        onRequestDiscard={onRequestDiscard}
+        onRequestCancel={() => {}}
+        onResume={() => {}}
+        onRetry={() => {}}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Apply changes" }));
+    expect(onApply).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    expect(onRequestDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers discard for a failed folder run", async () => {
+    const user = userEvent.setup();
+    const onRequestDiscard = vi.fn();
+
+    render(
+      <RunControls
+        runStatus="failed"
+        pendingAction={null}
+        discardable
+        onRequestDiscard={onRequestDiscard}
+        onRequestCancel={() => {}}
+        onResume={() => {}}
+        onRetry={() => {}}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Apply changes" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    expect(onRequestDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows no apply controls for a git run", () => {
+    render(
+      <RunControls
+        runStatus="completed"
+        pendingAction={null}
+        onRequestCancel={() => {}}
+        onResume={() => {}}
+        onRetry={() => {}}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Apply changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard" })).not.toBeInTheDocument();
+  });
+
   it("disables the controls while an action is in flight", () => {
     render(
       <RunControls

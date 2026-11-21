@@ -1,6 +1,10 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { initProjectRepository } from "../../api/onboarding";
+import { useProjectRepository } from "../../hooks/useProjectRepository";
 import { useRuns } from "../../hooks/useRuns";
 import { useWorkflows } from "../../hooks/useWorkflows";
+import { describeError } from "../../lib/errors";
+import { refreshProjectData } from "../../lib/refresh";
 import { formatObjective, formatRelativeTime, shortId } from "../../lib/format";
 import type { ProjectLabel } from "../../lib/projects";
 import { isTerminalRun, type Run } from "../../types/run";
@@ -115,7 +119,72 @@ interface ProjectNodeLeavesProps {
   onNewFlow: () => void;
 }
 
-function ProjectNodeLeaves({
+function ProjectNodeLeaves(props: ProjectNodeLeavesProps) {
+  const repository = useProjectRepository(props.project);
+
+  if (!repository.status && !repository.error) {
+    return (
+      <div className="tree-children">
+        <div className="tree-leaf__loading" role="status" aria-live="polite">
+          <span className="visually-hidden">Checking {props.projectTitle}</span>
+          <span className="catalog-skeleton catalog-skeleton--sm" aria-hidden="true" />
+        </div>
+      </div>
+    );
+  }
+
+  // Chats and flows cannot exist without a repository, so the node offers the
+  // one action that makes them possible instead of two sections that would
+  // only report an error.
+  if (
+    repository.status &&
+    repository.status.vcs !== "folder" &&
+    !repository.status.repository
+  ) {
+    return <ProjectSetup {...props} />;
+  }
+
+  // A failed repository read falls through: the leaves report their own errors.
+  return <ProjectLeaves {...props} />;
+}
+
+function ProjectSetup({ project, projectTitle }: ProjectNodeLeavesProps) {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const create = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await initProjectRepository(project);
+      refreshProjectData();
+    } catch (cause) {
+      setProblem(describeError(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="tree-children">
+      <div className="tree-setup" aria-label={`Set up ${projectTitle}`}>
+        <p className="tree-setup__text">
+          Not a git repository. Chats and flows need one.
+        </p>
+        <Button size="sm" onClick={() => void create()} disabled={busy}>
+          Create git repository
+        </Button>
+        {problem ? (
+          <p className="tree-setup__error" role="alert">
+            {problem}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ProjectLeaves({
   project,
   projectTitle,
   currentRunId,

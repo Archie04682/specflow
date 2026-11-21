@@ -70,8 +70,33 @@ nodes:
   - id: review
     title: Review
     kind: agent
-    prompt: Review the current changes. Report defects; do not rewrite them.
+    prompt: |
+      Review the current changes against "{{change}}". Report defects; do not
+      rewrite them. If you find something that must be fixed, write every
+      finding to .specflow/review.md, one per heading. If the changes are
+      clean, do not create that file.
     harness: pi
+    allow_inject: true
+
+  # The verdict is a repository fact, not a model's account of its own work:
+  # review leaves a findings file and this gate checks for it. Exit 0 is
+  # "clean" and exit 1 is "issues"; any other exit code still fails the node.
+  - id: review_gate
+    title: Review gate
+    kind: command
+    command: test ! -s .specflow/review.md
+    routes:
+      0: clean
+      1: issues
+
+  - id: fix
+    title: Fix
+    kind: agent
+    prompt: |
+      Read .specflow/review.md and fix every issue it lists. Delete that file
+      when you believe all of them are addressed.
+    harness: pi
+    interactive: true
     allow_inject: true
 
   - id: tests
@@ -117,7 +142,12 @@ edges:
   - {from: explore, to: propose}
   - {from: propose, to: apply}
   - {from: apply, to: review}
-  - {from: review, to: tests}
+  - {from: review, to: review_gate}
+  # Exactly one of these two is taken, so the run fixes what review found or
+  # goes straight on to the tests; both paths meet again at tests.
+  - {from: review_gate, to: fix, when: issues}
+  - {from: review_gate, to: tests, when: clean}
+  - {from: fix, to: tests}
   - {from: tests, to: verify}
   - {from: verify, to: archive}
   - {from: archive, to: merge}

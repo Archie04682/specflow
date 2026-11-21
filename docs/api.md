@@ -33,7 +33,8 @@ checkout it also reports the checkout's revision and a `staleReason` —
 | `POST` | `/api/runs/{id}/approve` | Resolve an approval gate |
 | `POST` | `/api/runs/{id}/retry` | Retry a failed node (`forward` or `clean`) |
 | `POST` | `/api/runs/{id}/resume` | Continue at the first unfinished node |
-| `DELETE` | `/api/runs/{id}?project=` | Remove the run's worktree |
+| `POST` | `/api/runs/{id}/apply?project=` | Write a completed folder run's changes into the project |
+| `DELETE` | `/api/runs/{id}?project=` | Discard the run's workspace (and a folder run's changes) |
 
 Create a run:
 
@@ -55,6 +56,12 @@ them, so a second server would treat another process's live run as interrupted.
 | `GET` | `/api/workflows/{reference}?project=` | Read one workflow's source, draft, and content hash |
 | `PUT` | `/api/workflows/{reference}?project=` | Validate and save a workflow draft atomically |
 | `GET` | `/api/skills?project=` | List installed skills from the configured roots |
+| `GET` | `/api/project/readiness?project=` | Gaps, mode, actions, and whether the project can run |
+| `GET` | `/api/project/repository?project=` | Whether the directory is a repository, its mode, branch, and commit |
+| `POST` | `/api/project/repository` | Initialise a git repository (git mode only) |
+| `POST` | `/api/project/setup` | Record the workspace mode: `{"project": "/path", "vcs": "git" \| "folder"}` |
+| `POST` | `/api/project/commit` | Commit every uncommitted path; refuses secret-looking paths |
+| `POST` | `/api/project/ignore` | Append paths to `.gitignore`: `{"project": "/path", "paths": [".env"]}` |
 | `POST` | `/api/project/pick` | Open the native folder dialog (loopback only) |
 
 `GET /api/workflows` returns `{"workflows": [...]}`; each entry carries
@@ -66,6 +73,21 @@ skills.
 (declaration order, each with `id`, `title`, `kind`, `interactive`,
 `allowInject`, `requireApproval`), and `edges` (`from`, `to`) from the
 definition the run was pinned to. Both reads are read-only.
+
+`POST /api/project/setup` writes `vcs` into `.specflow/config.yaml`, initialises
+a repository for `git`, and creates nothing else. The mode can change only
+before the project's first run.
+
+`POST /api/project/commit` stages everything and commits it as one commit,
+deriving "Initial commit" when there is no HEAD. It refuses with `409` and a
+`secrets` list when a path looks like `.env`, a key, or a certificate, so a
+first commit cannot publish one; the operator can then `POST
+/api/project/ignore` and commit again. A clean tree is refused with `400`.
+
+`POST /api/runs/{id}/apply` returns `{"written": [...], "deleted": [...]}` for a
+completed folder run and refuses with `409` when a project file changed since
+the run started. A run payload carries `vcs` and `apply` (`pending`, `applied`,
+or `discarded`).
 
 `POST /api/project/pick` opens the local operating-system folder dialog on the
 machine running the server. It accepts loopback clients only and returns `501`

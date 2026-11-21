@@ -46,6 +46,8 @@ export interface NodeRun {
   command?: string;
   output?: string;
   checkpoint?: string;
+  /** The route label a routing node completed under, absent otherwise. */
+  outcome?: string;
   /** Always present; an empty object when the harness reported nothing. */
   usage: Usage;
   /** Always present; "0001-01-01T00:00:00Z" when the node never started. */
@@ -90,6 +92,8 @@ export interface Run {
   checkpoints?: Record<string, string>;
   pending?: PendingInteraction;
   injections?: InjectionRecord[];
+  vcs?: "git" | "folder";
+  apply?: "pending" | "applied" | "discarded";
   sourceBranch?: string;
   baseCommit?: string;
   branch?: string;

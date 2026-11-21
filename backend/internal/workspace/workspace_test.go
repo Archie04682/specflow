@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"example.com/specflow/backend/internal/openspec"
 )
 
 func gitRun(t *testing.T, dir string, args ...string) string {
@@ -151,10 +153,91 @@ func TestCreateWorktreeLeavesProjectOnItsBranch(t *testing.T) {
 	}
 }
 
-func TestOpenRefusesNonGitDirectory(t *testing.T) {
-	_, err := Open(context.Background(), t.TempDir())
-	if !errors.Is(err, ErrNotGitRepository) {
-		t.Fatalf("err = %v, want ErrNotGitRepository", err)
+func TestOpenAcceptsNonGitDirectory(t *testing.T) {
+	directory := t.TempDir()
+	project, err := Open(context.Background(), directory)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	status, err := project.GitStatus(context.Background())
+	if err != nil {
+		t.Fatalf("git status: %v", err)
+	}
+	if status.Repository || status.Reason == "" || status.VCS != ModeGit {
+		t.Fatalf("status = %+v", status)
+	}
+	if err := project.RequireGit(context.Background()); !errors.Is(err, ErrNotGitRepository) {
+		t.Fatalf("require git: %v", err)
+	}
+}
+
+func TestModeDefaultsToGit(t *testing.T) {
+	project := newProject(t)
+	mode, err := project.Mode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != ModeGit {
+		t.Fatalf("mode = %q, want %q", mode, ModeGit)
+	}
+}
+
+func TestSetModeRecordsTheModeAndKeepsTheConfig(t *testing.T) {
+	project := newProject(t)
+	if err := project.EnsureLayout(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(project.SpecflowDir(), configFileName)
+	original := "# keep this comment\nskills:\n  - .agents/skills\nunknown: true\n"
+	writeFile(t, path, original)
+
+	if err := project.SetMode(ModeFolder); err != nil {
+		t.Fatal(err)
+	}
+	mode, err := project.Mode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != ModeFolder {
+		t.Fatalf("mode = %q", mode)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, fragment := range []string{"# keep this comment", "unknown: true", ".agents/skills", "vcs: folder"} {
+		if !strings.Contains(text, fragment) {
+			t.Fatalf("config lost %q:\n%s", fragment, text)
+		}
+	}
+}
+
+func TestSetModeIsRefusedAfterARun(t *testing.T) {
+	project := newProject(t)
+	if err := project.EnsureLayout(); err != nil {
+		t.Fatal(err)
+	}
+	runDir := project.RunDir("run-1")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(runDir, "run.json"), "{}\n")
+
+	if err := project.SetMode(ModeFolder); err == nil {
+		t.Fatal("a mode change was accepted after a run")
+	}
+}
+
+func TestSetModeRefusesAnUnknownMode(t *testing.T) {
+	project := newProject(t)
+	if err := project.SetMode("svn"); err == nil {
+		t.Fatal("an unknown mode was accepted")
+	}
+	if mode, err := project.Mode(); err != nil || mode != ModeGit {
+		t.Fatalf("mode = %q, %v", mode, err)
 	}
 }
 
@@ -299,14 +382,62 @@ func TestSkillSourcesDefaultToTheSharedProjectRootFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("skill sources: %v", err)
 	}
-	if len(sources) != 4 {
-		t.Fatalf("sources = %+v, want four", sources)
+	if len(sources) != 6 {
+		t.Fatalf("sources = %+v, want six", sources)
 	}
 	if sources[0] != (SkillSource{Label: ".specflow/skills", Path: filepath.Join(project.Root, ".specflow", "skills")}) {
 		t.Fatalf("first source = %+v", sources[0])
 	}
-	if sources[1].Label != ".dsh/skills" || sources[2].Label != ".pi/skills" {
-		t.Fatalf("sources = %+v", sources)
+	// Shared project roots precede harness-specific ones, and the global roots
+	// come last: .agents/skills is where the skills CLI installs.
+	want := []string{".specflow/skills", ".agents/skills", ".dsh/skills", ".pi/skills", "~/.dsh/skills", "~/.agents/skills"}
+	for index, label := range want {
+		if sources[index].Label != label {
+			t.Fatalf("sources[%d] = %q, want %q", index, sources[index].Label, label)
+		}
+	}
+}
+
+func TestSkillResolutionFollowsTheSharedProjectOrder(t *testing.T) {
+	project := newProject(t)
+	if err := project.EnsureLayout(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The same name in three roots: the project's own copy must win, and the
+	// installed copy must beat the harness-specific one.
+	for _, directory := range []string{
+		filepath.Join(".specflow", "skills", "shared"),
+		filepath.Join(".agents", "skills", "shared"),
+		filepath.Join(".dsh", "skills", "shared"),
+	} {
+		if err := os.MkdirAll(filepath.Join(project.Root, directory), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	roots, err := project.SkillRoots()
+	if err != nil {
+		t.Fatalf("skill roots: %v", err)
+	}
+	resolved, err := openspec.ResolveSkill("shared", roots)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolved != filepath.Join(project.Root, ".specflow", "skills", "shared") {
+		t.Fatalf("resolved = %q, want the project's own copy", resolved)
+	}
+
+	// Remove the project copy: the shared install wins over the harness folder.
+	if err := os.RemoveAll(filepath.Join(project.Root, ".specflow", "skills", "shared")); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err = openspec.ResolveSkill("shared", roots)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolved != filepath.Join(project.Root, ".agents", "skills", "shared") {
+		t.Fatalf("resolved = %q, want the installed copy", resolved)
 	}
 }
 
@@ -333,5 +464,31 @@ func TestSkillSourcesConfigOverridesDefaults(t *testing.T) {
 	}
 	if sources[1].Path != filepath.Join(home, "shared-skills") {
 		t.Fatalf("sources[1] = %+v", sources[1])
+	}
+}
+
+func TestSetModeRecordsTheDefaultWithoutChangingIt(t *testing.T) {
+	project := newProject(t)
+	if err := project.EnsureLayout(); err != nil {
+		t.Fatal(err)
+	}
+	// A run exists, so the mode may no longer change — but recording the mode
+	// it already has is not a change.
+	if err := os.MkdirAll(project.RunDir("run-1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := project.SetMode(ModeGit); err != nil {
+		t.Fatalf("record the current mode: %v", err)
+	}
+	explicit, err := project.ModeIsExplicit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !explicit {
+		t.Fatal("the mode was not recorded")
+	}
+	if err := project.SetMode(ModeFolder); err == nil {
+		t.Fatal("a mode change after a run was accepted")
 	}
 }

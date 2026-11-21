@@ -840,6 +840,22 @@ select.input {
   stroke-dasharray: 4 4;
 }
 
+/* A branch the run did not take stays readable but recedes. */
+.react-flow__edge.run-edge--untaken .react-flow__edge-path {
+  stroke: var(--border);
+  stroke-dasharray: 3 5;
+  opacity: 0.6;
+}
+
+.react-flow__edge-text {
+  font-size: 10px;
+  fill: var(--text-faint);
+}
+
+.react-flow__edge-textbg {
+  fill: var(--bg);
+}
+
 .react-flow__background {
   opacity: 0.45;
 }
@@ -2426,6 +2442,27 @@ select.input {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+
+.route-row {
+  display: grid;
+  grid-template-columns: 96px 1fr auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.route-row__action {
+  display: flex;
+}
+
+.editor-edge__label {
+  font-size: 10px;
+  fill: var(--text-faint);
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
 }
 
 

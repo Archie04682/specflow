@@ -25,10 +25,12 @@ type GraphNode struct {
 	RequireApproval bool     `json:"requireApproval"`
 }
 
-// GraphEdge is one authored ordering edge.
+// GraphEdge is one authored ordering edge. When names the route label of the
+// source node that takes it; it is empty for an always-taken edge.
 type GraphEdge struct {
 	From string `json:"from"`
 	To   string `json:"to"`
+	When string `json:"when,omitempty"`
 }
 
 // WorkflowSummary is one workflow the project can start a run from. It is the
@@ -190,7 +192,7 @@ func graphNodes(workflow *Workflow) []GraphNode {
 func graphEdges(workflow *Workflow) []GraphEdge {
 	edges := make([]GraphEdge, 0, len(workflow.Edges))
 	for _, edge := range workflow.Edges {
-		edges = append(edges, GraphEdge{From: edge.From, To: edge.To})
+		edges = append(edges, GraphEdge{From: edge.From, To: edge.To, When: edge.When})
 	}
 	return edges
 }

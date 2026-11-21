@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useHarnesses } from "../../hooks/useHarnesses";
+import { useProjectReadiness } from "../../hooks/useProjectReadiness";
 import { useStartRun } from "../../hooks/useRunActions";
 import { usePendingAction, useRunError } from "../../stores/runStore";
 import { basename } from "../../lib/format";
@@ -13,6 +14,7 @@ import {
   IconFolder,
   IconPlus,
 } from "../common/icons";
+import { ProjectOnboarding } from "./ProjectOnboarding";
 import { ProjectRequired } from "./ProjectRequired";
 import { ViewHeader } from "./ViewHeader";
 
@@ -43,6 +45,7 @@ export function ChatHome({
   onProjectChange,
 }: ChatHomeProps) {
   const { harnesses, error: harnessError } = useHarnesses();
+  const { readiness, loading: readinessLoading } = useProjectReadiness(project);
   const [workflow, setWorkflow] = useState("");
   const [objective, setObjective] = useState("");
   const startError = useRunError();
@@ -64,6 +67,16 @@ export function ChatHome({
   );
   const hasUsableFlow = workflows.some((entry) => entry.valid);
   const notReady = harnesses.filter((harness) => !harness.ready);
+  // A project that is not a repository, or has no commit, cannot start any run:
+  // the setup card is the only surface worth showing there, and the catalog and
+  // harness messages would only repeat it.
+  const structuralGap =
+    readiness !== null &&
+    readiness.vcs !== "folder" &&
+    (!readiness.git.repository || !readiness.git.hasCommit);
+  const setupListsHarness =
+    readiness !== null &&
+    readiness.tools.harnesses.some((harness) => !harness.ready);
   const hasProject = project.trim() !== "";
   const canStart =
     hasProject &&
@@ -113,9 +126,16 @@ export function ChatHome({
               </p>
             </div>
 
+            <ProjectOnboarding
+              project={project}
+              readiness={readiness}
+              loading={readinessLoading}
+              onProvisioned={onReloadWorkflows}
+            />
+
             {startError ? <Banner tone="error">{startError}</Banner> : null}
 
-            {workflowsError ? (
+            {workflowsError && !structuralGap ? (
               <Banner
                 tone="error"
                 action={
@@ -128,7 +148,7 @@ export function ChatHome({
               </Banner>
             ) : null}
 
-            {notReady.length > 0 ? (
+            {notReady.length > 0 && !structuralGap && !setupListsHarness ? (
               <Banner tone="warning">
                 <strong>Harness not ready.</strong>{" "}
                 {notReady
@@ -148,6 +168,11 @@ export function ChatHome({
               </p>
             ) : null}
 
+            {structuralGap ? (
+              <p className="chat-home__setup-hint">
+                Complete the setup above, then start a run here.
+              </p>
+            ) : (
             <form className="composer" onSubmit={onSubmit} noValidate>
               <div className="composer__accessory">
                 <div className="composer__flow-controls">
@@ -241,6 +266,7 @@ export function ChatHome({
                 </button>
               </div>
             </form>
+            )}
 
             {invalid.length > 0 ? (
               <p className="chat-home__warning">

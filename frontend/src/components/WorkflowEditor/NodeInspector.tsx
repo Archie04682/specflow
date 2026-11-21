@@ -2,7 +2,10 @@ import { useRef, useState } from "react";
 import {
   normalizeModel,
   parseTriState,
+  routeEntries,
   triStateValue,
+  withRoute,
+  withoutRoute,
 } from "../../editor/model";
 import { PROMPT_VARIABLES } from "../../editor/promptVariables";
 import type { HarnessInfo } from "../../types/harness";
@@ -23,6 +26,13 @@ interface NodeInspectorProps {
   onChange: (patch: Partial<WorkflowNodeDraft>) => void;
   onRemove: () => void;
   onClose: () => void;
+}
+
+// nextRouteCode picks a free exit code so adding a route never overwrites one.
+function nextRouteCode(node: WorkflowNodeDraft): number {
+  const entries = routeEntries(node);
+  if (entries.length === 0) return 0;
+  return Math.max(...entries.map((entry) => entry.code)) + 1;
 }
 
 const POSTCONDITION_TYPES = [
@@ -351,6 +361,81 @@ export function NodeInspector({
             />
           </div>
         )}
+
+        {node.kind === "command" ? (
+          <fieldset className="editor-fieldset">
+            <legend>Routes</legend>
+            <p className="muted small">
+              A declared exit code completes this node under its label instead
+              of failing it, and selects the outgoing edge carrying that label.
+              Any other exit code still fails the node.
+            </p>
+            {routeEntries(node).map(({ code, label }) => (
+              <div className="route-row" key={code}>
+                <div className="field">
+                  <label
+                    className="field__label"
+                    htmlFor={`node-route-code-${code}`}
+                  >
+                    Exit code
+                  </label>
+                  <input
+                    id={`node-route-code-${code}`}
+                    className="input mono"
+                    type="number"
+                    value={code}
+                    onChange={(event) => {
+                      const parsed = Number(event.target.value);
+                      if (!Number.isFinite(parsed)) return;
+                      const moved = { ...(withoutRoute(node, code) ?? {}) };
+                      moved[String(parsed)] = label;
+                      onChange({ routes: moved });
+                    }}
+                  />
+                </div>
+                <div className="field">
+                  <label
+                    className="field__label"
+                    htmlFor={`node-route-label-${code}`}
+                  >
+                    Route
+                  </label>
+                  <input
+                    id={`node-route-label-${code}`}
+                    className="input mono"
+                    placeholder="clean"
+                    value={label}
+                    onChange={(event) =>
+                      onChange({ routes: withRoute(node, code, event.target.value) })
+                    }
+                  />
+                </div>
+                <div className="field route-row__action">
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => onChange({ routes: withoutRoute(node, code) })}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              </div>
+            ))}
+            <div className="editor-actions">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() =>
+                  onChange({
+                    routes: withRoute(node, nextRouteCode(node), ""),
+                  })
+                }
+              >
+                Add route
+              </Button>
+            </div>
+          </fieldset>
+        ) : null}
 
         <div className="field-grid">
           <div className="field">

@@ -30,6 +30,7 @@ func registerRunRoutes(mux *http.ServeMux, engine *orchestrator.Engine) {
 	mux.Handle("POST /api/runs/{id}/retry", http.HandlerFunc(handlers.retry))
 	mux.Handle("POST /api/runs/{id}/resume", http.HandlerFunc(handlers.resume))
 	mux.Handle("DELETE /api/runs/{id}", http.HandlerFunc(handlers.discard))
+	mux.Handle("POST /api/runs/{id}/apply", http.HandlerFunc(handlers.apply))
 }
 
 func (h *runHandlers) create(w http.ResponseWriter, r *http.Request) {
@@ -220,6 +221,12 @@ func (h *runHandlers) retry(w http.ResponseWriter, r *http.Request) {
 func (h *runHandlers) resume(w http.ResponseWriter, r *http.Request) {
 	h.runAction(w, r, func(project, runID string) (any, error) {
 		return map[string]string{"status": "running"}, h.engine.Resume(r.Context(), project, runID)
+	})
+}
+
+func (h *runHandlers) apply(w http.ResponseWriter, r *http.Request) {
+	h.runAction(w, r, func(project, runID string) (any, error) {
+		return h.engine.Apply(r.Context(), project, runID)
 	})
 }
 

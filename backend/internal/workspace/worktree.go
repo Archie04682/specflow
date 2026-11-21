@@ -9,21 +9,34 @@ import (
 	"strings"
 )
 
-// Worktree is a run's private checkout.
+// Worktree is a run's private workspace: a git worktree on its own branch for
+// a git project, or a copy of the project for a folder project.
 type Worktree struct {
 	// Path is the directory the run's nodes execute in.
 	Path string `json:"path"`
-	// Branch is the run's own branch.
-	Branch string `json:"branch"`
-	// Base is the commit the branch was created from.
-	Base string `json:"base"`
-	// Source is the branch the project had checked out when the run started.
-	Source string `json:"source"`
+	// Branch is the run's own branch; empty for a folder run.
+	Branch string `json:"branch,omitempty"`
+	// Base is the commit the branch was created from; empty for a folder run.
+	Base string `json:"base,omitempty"`
+	// Source is the branch the project had checked out when the run started;
+	// empty for a folder run.
+	Source string `json:"source,omitempty"`
+	// Mode is the project's workspace mode when the run was created.
+	Mode string `json:"mode,omitempty"`
+	// Root is the project root the workspace belongs to.
+	Root string `json:"-"`
+	// RunID is the run the workspace belongs to.
+	RunID string `json:"-"`
+
+	project *Project
 }
 
 // CreateWorktree branches a fresh worktree for the run from the project's
 // current commit and records the branch, base, and source branch.
 func (p *Project) CreateWorktree(ctx context.Context, runID string) (*Worktree, error) {
+	if err := p.RequireGit(ctx); err != nil {
+		return nil, err
+	}
 	if err := p.CheckIsolatable(ctx); err != nil {
 		return nil, err
 	}
@@ -48,7 +61,28 @@ func (p *Project) CreateWorktree(ctx context.Context, runID string) (*Worktree, 
 		return nil, fmt.Errorf("create worktree for run %s: %w", runID, err)
 	}
 
-	return &Worktree{Path: path, Branch: branch, Base: base, Source: source}, nil
+	return &Worktree{
+		Path:    path,
+		Branch:  branch,
+		Base:    base,
+		Source:  source,
+		Mode:    ModeGit,
+		Root:    p.Root,
+		RunID:   runID,
+		project: p,
+	}, nil
+}
+
+// AdoptWorktree rebuilds the handle for a persisted run's workspace, attaching
+// it to the project it belongs to.
+func (p *Project) AdoptWorktree(worktree Worktree) *Worktree {
+	adopted := worktree
+	adopted.Root = p.Root
+	adopted.project = p
+	if adopted.Mode == "" {
+		adopted.Mode = ModeGit
+	}
+	return &adopted
 }
 
 // RemoveWorktree deletes a run's checkout but keeps its branch, so the work
@@ -85,6 +119,10 @@ func (w *Worktree) Dirty(ctx context.Context) (bool, error) {
 // commit. A worktree that changed nothing reuses its current commit instead of
 // creating an empty one.
 func (w *Worktree) Checkpoint(ctx context.Context, nodeID string) (string, error) {
+	if w.Mode == ModeFolder {
+		return w.snapshot(nodeID)
+	}
+
 	dirty, err := w.Dirty(ctx)
 	if err != nil {
 		return "", err
@@ -117,6 +155,9 @@ func (w *Worktree) Checkpoint(ctx context.Context, nodeID string) (string, error
 func (w *Worktree) Restore(ctx context.Context, commit string) error {
 	if commit == "" {
 		return errors.New("restore: empty checkpoint")
+	}
+	if w.Mode == ModeFolder {
+		return w.restoreSnapshot(commit)
 	}
 	if _, err := runGit(ctx, w.Path, "reset", "--hard", commit); err != nil {
 		return fmt.Errorf("restore worktree to %s: %w", commit, err)

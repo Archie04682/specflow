@@ -43,6 +43,10 @@ func NormalizeWorkflow(workflow *Workflow, context NormalizeContext) (*WorkflowP
 		return nil, fmt.Errorf("order workflow %s: %w", workflow.ID, err)
 	}
 	plan.Order = order
+	plan.Edges = make([]PlanEdge, 0, len(workflow.Edges))
+	for _, edge := range workflow.Edges {
+		plan.Edges = append(plan.Edges, PlanEdge{From: edge.From, To: edge.To, When: edge.When})
+	}
 	return plan, nil
 }
 
@@ -90,6 +94,9 @@ func normalizeNode(workflow *Workflow, node *Node, context NormalizeContext) (Pl
 	if node.Postcondition != nil {
 		postcondition := *node.Postcondition
 		planNode.Postcondition = &postcondition
+	}
+	if len(node.Routes) > 0 {
+		planNode.Routes = copyRoutes(node.Routes)
 	}
 
 	names := node.EffectiveSkills()

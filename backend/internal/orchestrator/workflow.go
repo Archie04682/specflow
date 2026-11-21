@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -119,12 +120,29 @@ type Node struct {
 	Retry           int            `yaml:"retry"`
 	Tools           []string       `yaml:"tools"`
 	Postcondition   *Postcondition `yaml:"postcondition"`
+	// Routes maps an exit code to the route label the node completes under.
+	// Only a command node has exit codes, so only a command node may route.
+	Routes map[int]string `yaml:"routes,omitempty"`
 }
 
-// Edge is a directed dependency between nodes. It carries ordering only.
+// Edge is a directed dependency between nodes. It carries ordering and, when
+// its source declares routes, the route label that selects it.
 type Edge struct {
 	From string `yaml:"from"`
 	To   string `yaml:"to"`
+	// When names the route label of the source node that takes this edge.
+	When string `yaml:"when,omitempty"`
+}
+
+// RouteCodes returns the node's declared exit codes in ascending order, so a
+// caller that reports per-code defects does so deterministically.
+func (n *Node) RouteCodes() []int {
+	codes := make([]int, 0, len(n.Routes))
+	for code := range n.Routes {
+		codes = append(codes, code)
+	}
+	sort.Ints(codes)
+	return codes
 }
 
 // Workflow is a graph of nodes with ordering edges.

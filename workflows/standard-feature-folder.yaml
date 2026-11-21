@@ -1,0 +1,142 @@
+# Canonical SpecFlow workflow template for a folder project.
+#
+# The graph is the canonical one without the merge node: a folder run works on a
+# copy of the project, and applying that copy is the run-level approval instead
+# of a merge. A block's name carries no behavior. Each node is an `agent` node, run through
+# a harness, or a `command` node, run by the orchestrator as a deterministic
+# gate. Everything that makes a node "explore" or "verify" is configuration
+# below - the engine only knows the two kinds.
+#
+# `model: default` means "let the harness choose". It is never forwarded as a
+# model identifier.
+id: standard-feature-folder
+name: Standard feature (folder)
+description: >-
+  Explore the problem, propose an OpenSpec change, implement it, review the
+  changes, run the tests, validate, and archive. Applying the run's copy to the
+  project is the final approval.
+version: 2
+
+defaults:
+  harness: pi
+  model: default
+  interactive: false
+  allow_inject: true
+
+nodes:
+  - id: explore
+    title: Explore
+    kind: agent
+    skill: openspec-explore
+    prompt: |
+      The run objective is: {{objective}}
+      Explore the repository and that objective. Ask the operator when a
+      decision is needed.
+    harness: pi
+    model:
+      id: default
+      thinking: high
+    interactive: true
+    allow_inject: true
+    # Explore's outcome is the conversation it had, not a file: there is no
+    # honest repository postcondition to declare.
+
+  - id: propose
+    title: Propose
+    kind: agent
+    skill: openspec-propose
+    prompt: |
+      The run objective is: {{objective}}
+      Create a change that satisfies it.
+    harness: pi
+    allow_inject: true
+    require_approval: true
+    postcondition:
+      type: new_change
+      description: Propose must create a new change under openspec/changes/
+
+  - id: apply
+    title: Apply
+    kind: agent
+    skill: openspec-apply-change
+    prompt: |
+      The run objective is: {{objective}}
+      Implement the change "{{change}}".
+    harness: pi
+    interactive: true
+    allow_inject: true
+    postcondition:
+      type: tasks_complete
+      change: "{{change}}"
+      description: Every task in the change must be checked
+
+  - id: review
+    title: Review
+    kind: agent
+    prompt: |
+      Review the current changes against "{{change}}". Report defects; do not
+      rewrite them. If you find something that must be fixed, write every
+      finding to .specflow/review.md, one per heading. If the changes are
+      clean, do not create that file.
+    harness: pi
+    allow_inject: true
+
+  # The verdict is a repository fact, not a model's account of its own work:
+  # review leaves a findings file and this gate checks for it. Exit 0 is
+  # "clean" and exit 1 is "issues"; any other exit code still fails the node.
+  - id: review_gate
+    title: Review gate
+    kind: command
+    command: test ! -s .specflow/review.md
+    routes:
+      0: clean
+      1: issues
+
+  - id: fix
+    title: Fix
+    kind: agent
+    prompt: |
+      Read .specflow/review.md and fix every issue it lists. Delete that file
+      when you believe all of them are addressed.
+    harness: pi
+    interactive: true
+    allow_inject: true
+
+  - id: tests
+    title: Tests
+    kind: agent
+    prompt: Add or update the tests this change needs, then run them and report failures.
+    harness: pi
+    allow_inject: true
+
+  - id: verify
+    title: Verify
+    kind: command
+    command: openspec validate "{{change}}" --strict && make test
+    timeout: 10m
+    postcondition:
+      type: exit_zero
+      description: Validation and the test suite must pass
+
+  - id: archive
+    title: Archive
+    kind: command
+    # Archiving is deterministic: a completed run must not silently skip it
+    # because a model chose not to call the skill.
+    command: openspec archive "{{change}}" --yes
+    postcondition:
+      type: exit_zero
+      description: The change must archive cleanly
+
+edges:
+  - {from: explore, to: propose}
+  - {from: propose, to: apply}
+  - {from: apply, to: review}
+  - {from: review, to: review_gate}
+  # Exactly one of these two is taken, so the run fixes what review found or
+  # goes straight on to the tests; both paths meet again at tests.
+  - {from: review_gate, to: fix, when: issues}
+  - {from: review_gate, to: tests, when: clean}
+  - {from: fix, to: tests}
+  - {from: tests, to: verify}
+  - {from: verify, to: archive}

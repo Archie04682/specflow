@@ -13,7 +13,7 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { edgeKey, editorGraphNodes } from "../../editor/model";
+import { canvasEdges, edgeKey, editorGraphNodes } from "../../editor/model";
 import {
   findFreePosition,
   type EditorPosition,
@@ -139,14 +139,16 @@ export function EditorGraph({
 
   const edges = useMemo<Edge[]>(
     () =>
-      draft.edges.map((edge) => {
-        const key = edgeKey(edge);
-        const selected = key === selectedEdgeKey;
-        const routed = handleSides[key];
+      canvasEdges(draft).map((edge) => {
+        const selected = edge.id === selectedEdgeKey;
+        const routed = handleSides[edge.id];
         return {
-          id: key,
+          id: edge.id,
           source: edge.from,
           target: edge.to,
+          // A condition rides on the edge as its label, so the canvas shows
+          // which route takes it; it never contributes to layout.
+          label: edge.label,
           // A handle-routed edge keeps the sides the operator used. Edges from
           // a saved file have no handle metadata, so the custom edge routes
           // them between the sides that face each other.
@@ -166,7 +168,7 @@ export function EditorGraph({
           },
         };
       }),
-    [draft.edges, selectedEdgeKey, handleSides],
+    [draft, selectedEdgeKey, handleSides],
   );
 
   const topology = useMemo(

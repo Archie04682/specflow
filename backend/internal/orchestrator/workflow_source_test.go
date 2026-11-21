@@ -233,12 +233,20 @@ func TestReadWorkflowSourceUnparseableFile(t *testing.T) {
 }
 
 func TestReadWorkflowSourceInvalidProject(t *testing.T) {
-	_, err := ReadWorkflowSource(context.Background(), t.TempDir(), "anything")
+	missing := filepath.Join(t.TempDir(), "missing")
+	_, err := ReadWorkflowSource(context.Background(), missing, "anything")
 	if err == nil {
-		t.Fatal("a non-git project was accepted")
+		t.Fatal("a missing project was accepted")
 	}
 	if !errors.Is(err, ErrWorkflowProject) {
 		t.Fatalf("error = %v, want ErrWorkflowProject", err)
+	}
+}
+
+func TestReadWorkflowSourceAcceptsAFolderProject(t *testing.T) {
+	_, err := ReadWorkflowSource(context.Background(), t.TempDir(), "missing-flow")
+	if !errors.Is(err, ErrWorkflowNotFound) {
+		t.Fatalf("error = %v, want ErrWorkflowNotFound", err)
 	}
 }
 

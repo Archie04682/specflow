@@ -2,13 +2,16 @@ import { useCallback } from "react";
 import { ApiError } from "../api/client";
 import {
   answerQuestion,
+  applyRun,
   approveGate,
   cancelRun,
   createRun,
+  discardRun,
   injectClarification,
   resumeRun,
   retryRun,
   type AnswerPayload,
+  type ApplyReport,
   type ApprovalDecision,
   type RetryMode,
 } from "../api/runs";
@@ -34,6 +37,18 @@ export interface RunActions {
   cancel: () => Promise<boolean>;
   retry: (nodeId: string, mode: RetryMode) => Promise<boolean>;
   resume: () => Promise<boolean>;
+  apply: () => Promise<boolean>;
+  discard: () => Promise<boolean>;
+}
+
+// One sentence naming what applying did, for the notice that outlives the
+// refetch clearing the run's pending apply.
+function applySummary(report: ApplyReport): string {
+  const written = report.written.length;
+  const deleted = report.deleted.length;
+  const parts = [`${written} ${written === 1 ? "file" : "files"} written`];
+  if (deleted > 0) parts.push(`${deleted} deleted`);
+  return `Applied to the project: ${parts.join(", ")}.`;
 }
 
 export function useRunActions({
@@ -135,7 +150,27 @@ export function useRunActions({
     [project, runId, refresh, reconnect, withAction],
   );
 
-  return { answer, inject, approve, cancel, retry, resume };
+  const apply = useCallback(
+    () =>
+      withAction("apply", async () => {
+        const report = await applyRun(project, runId);
+        useRunStore.getState().setNotice(applySummary(report));
+        await refresh();
+      }),
+    [project, runId, refresh, withAction],
+  );
+
+  const discard = useCallback(
+    () =>
+      withAction("discard", async () => {
+        await discardRun(project, runId);
+        useRunStore.getState().setNotice("The run's changes were discarded.");
+        await refresh();
+      }),
+    [project, runId, refresh, withAction],
+  );
+
+  return { answer, inject, approve, cancel, retry, resume, apply, discard };
 }
 
 export type StartResult =

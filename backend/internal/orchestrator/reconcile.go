@@ -56,12 +56,14 @@ func (e *Engine) repairInterrupted(project *workspace.Project, run *Run) {
 	live := &liveRun{
 		run:     run,
 		project: project,
-		worktree: &workspace.Worktree{
+		worktree: project.AdoptWorktree(workspace.Worktree{
 			Path:   run.Worktree,
 			Branch: run.Branch,
 			Base:   run.BaseCommit,
 			Source: run.SourceBranch,
-		},
+			Mode:   run.VCS,
+			RunID:  run.ID,
+		}),
 		done: make(chan struct{}),
 	}
 

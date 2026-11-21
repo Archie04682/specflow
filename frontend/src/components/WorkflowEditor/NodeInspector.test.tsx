@@ -412,3 +412,56 @@ describe("NodeInspector harness catalog", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("node routes", () => {
+  const gate: WorkflowNodeDraft = {
+    id: "gate",
+    title: "Review gate",
+    kind: "command",
+    command: "test ! -s .specflow/review.md",
+    routes: { "0": "clean", "1": "issues" },
+  };
+
+  it("edits a command node's routes", async () => {
+    const user = userEvent.setup();
+    const { onChange } = renderInspector(gate);
+
+    // One row per exit code, ordered by code.
+    const labels = await screen.findAllByLabelText("Route");
+    expect(labels).toHaveLength(2);
+    expect(labels[0]).toHaveValue("clean");
+    expect(labels[1]).toHaveValue("issues");
+
+    await user.clear(labels[1]);
+    await user.type(labels[1], "defects");
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      routes: { "0": "clean", "1": "defects" },
+    });
+  });
+
+  it("adds and removes a route", async () => {
+    const user = userEvent.setup();
+    const { onChange } = renderInspector(gate);
+
+    await user.click(screen.getByRole("button", { name: "Add route" }));
+    expect(onChange).toHaveBeenLastCalledWith({
+      routes: { "0": "clean", "1": "issues", "2": "" },
+    });
+
+    const removers = screen.getAllByRole("button", { name: "Remove" });
+    await user.click(removers[0]);
+    expect(onChange).toHaveBeenLastCalledWith({
+      routes: { "1": "issues", "2": "" },
+    });
+  });
+
+  it("offers no routes on an agent node", () => {
+    renderInspector(node);
+
+    expect(screen.queryByText("Routes")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add route" }),
+    ).not.toBeInTheDocument();
+  });
+});

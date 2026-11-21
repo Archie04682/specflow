@@ -96,7 +96,7 @@ func TestSkillCatalogEndpointRejectsAnUnusableProject(t *testing.T) {
 
 	for _, target := range []string{
 		server.URL + "/api/skills",
-		projectURL(server.URL, "/api/skills", t.TempDir()),
+		projectURL(server.URL, "/api/skills", filepath.Join(t.TempDir(), "missing")),
 	} {
 		response, body := request(t, http.MethodGet, target, nil)
 		if response.StatusCode != http.StatusBadRequest {

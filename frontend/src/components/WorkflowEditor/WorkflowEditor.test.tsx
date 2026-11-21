@@ -504,3 +504,120 @@ describe("WorkflowEditor skill catalog", () => {
     expect(within(trigger).getByText("ui-ux-pro-max")).toBeInTheDocument();
   });
 });
+
+describe("WorkflowEditor conditional edges", () => {
+  const routed: WorkflowSource = {
+    ...source,
+    reference: "routed",
+    draft: {
+      ...draft,
+      nodes: [
+        {
+          id: "gate",
+          title: "Review gate",
+          kind: "command",
+          command: "test ! -s review.md",
+          routes: { "0": "clean", "1": "issues" },
+        },
+        { id: "fix", title: "Fix", kind: "agent" },
+        { id: "verify", title: "Verify", kind: "agent" },
+      ],
+      edges: [
+        { from: "gate", to: "fix", when: "issues" },
+        { from: "gate", to: "verify", when: "clean" },
+        { from: "fix", to: "verify" },
+      ],
+    },
+  };
+
+  it("offers only the source's labels and records the chosen condition", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch((_url, init) => {
+      if (init?.method === "PUT") {
+        return fakeResponse(200, {
+          path: "/repo/.specflow/workflows/routed.yaml",
+          hash: "hash-routed-2",
+        });
+      }
+      return fakeResponse(200, routed);
+    });
+    renderEditor("routed");
+
+    await screen.findByTestId("editor-graph");
+    await user.click(screen.getByRole("tab", { name: /Edges/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Review gate → Fix (issues)" }),
+    );
+
+    const condition = screen.getByLabelText("Condition");
+    const options = within(condition)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(options).toEqual(["clean", "issues"]);
+
+    await user.selectOptions(condition, "clean");
+    await user.click(screen.getByRole("button", { name: "Save workflow" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          (call) => (call[1] as RequestInit | undefined)?.method === "PUT",
+        ),
+      ).toBe(true);
+    });
+    const putIndex = fetchMock.mock.calls.findIndex(
+      (call) => (call[1] as RequestInit | undefined)?.method === "PUT",
+    );
+    const body = callBody(fetchMock, putIndex) as { draft: WorkflowDraft };
+    expect(body.draft.edges[0]).toEqual({
+      from: "gate",
+      to: "fix",
+      when: "clean",
+    });
+    // Choosing a condition changes no node.
+    expect(body.draft.nodes).toEqual(routed.draft.nodes);
+  });
+
+  it("offers no always-taken choice on an edge from a routing node", async () => {
+    const user = userEvent.setup();
+    stubFetch(() =>
+      fakeResponse(200, {
+        ...routed,
+        draft: {
+          ...routed.draft,
+          // A freshly drawn edge from the gate carries no condition yet.
+          edges: [{ from: "gate", to: "fix" }],
+        },
+      }),
+    );
+    renderEditor("routed");
+
+    await screen.findByTestId("editor-graph");
+    await user.click(screen.getByRole("tab", { name: /Edges/ }));
+    await user.click(screen.getByRole("button", { name: "Review gate → Fix" }));
+
+    const condition = screen.getByLabelText("Condition");
+    const options = within(condition).getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual([
+      "Choose a route",
+      "clean",
+      "issues",
+    ]);
+    // The empty value is a prompt, not a selectable state: a routing node has
+    // no always-taken edge.
+    expect(options[0]).toBeDisabled();
+  });
+
+  it("offers no condition for an edge whose source declares no routes", async () => {
+    const user = userEvent.setup();
+    stubFetch(() => fakeResponse(200, routed));
+    renderEditor("routed");
+
+    await screen.findByTestId("editor-graph");
+    await user.click(screen.getByRole("tab", { name: /Edges/ }));
+    await user.click(screen.getByRole("button", { name: "Fix → Verify" }));
+
+    expect(screen.getByLabelText("From")).toHaveValue("fix");
+    expect(screen.queryByLabelText("Condition")).toBeNull();
+  });
+});

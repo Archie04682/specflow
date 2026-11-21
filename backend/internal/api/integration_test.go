@@ -15,11 +15,13 @@ import (
 	"example.com/specflow/backend/internal/orchestrator"
 )
 
-func TestCanonicalWorkflowEndToEnd(t *testing.T) {
+// canonicalWorkflowProject writes the real template into a fresh project with
+// the harness and the toolchain gates swapped for ones this test can run.
+func canonicalWorkflowProject(t *testing.T) string {
+	t.Helper()
+
 	project := newRepo(t)
 
-	// Take the real template and swap the harness and the gates that need a
-	// toolchain this test does not have.
 	source, err := os.ReadFile(filepath.Join("..", "..", "..", "workflows", "standard-feature.yaml"))
 	if err != nil {
 		t.Fatalf("read canonical workflow: %v", err)
@@ -52,17 +54,17 @@ func TestCanonicalWorkflowEndToEnd(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	return project
+}
+
+// canonicalServer starts the API over a project with one mock script.
+func canonicalServer(t *testing.T, project string, script mock.Script) *httptest.Server {
+	t.Helper()
 
 	registry := harness.NewRegistry()
-	err = registry.Register(func() harness.Adapter {
-		return mock.New(mock.Script{
-			WritesOn: "propose",
-			Writes: map[string]string{
-				"openspec/changes/demo-change/tasks.md": "# Tasks\n\n- [x] 1.1 Done\n- [x] 1.2 Also done\n",
-			},
-		})
-	})
-	if err != nil {
+	if err := registry.Register(func() harness.Adapter {
+		return mock.New(script)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	engine := orchestrator.New(registry)
@@ -70,6 +72,13 @@ func TestCanonicalWorkflowEndToEnd(t *testing.T) {
 
 	server := httptest.NewServer(NewRouterWithDeps(fstestMapFS(), registry, engine))
 	t.Cleanup(server.Close)
+	return server
+}
+
+// runCanonical creates and starts a run of the canonical template, approving
+// every gate, and returns the terminal record.
+func runCanonical(t *testing.T, server *httptest.Server, project string) (orchestrator.Run, map[string]bool) {
+	t.Helper()
 
 	response, body := request(t, "POST", server.URL+"/api/runs", map[string]string{
 		"project":   project,
@@ -110,19 +119,45 @@ func TestCanonicalWorkflowEndToEnd(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-
 	if done.Status != orchestrator.RunCompleted {
 		t.Fatalf("run ended %s: %s", done.Status, done.Error)
+	}
+	return done, approved
+}
+
+func TestCanonicalWorkflowEndToEnd(t *testing.T) {
+	project := canonicalWorkflowProject(t)
+
+	server := canonicalServer(t, project, mock.Script{
+		WritesOn: "propose",
+		Writes: map[string]string{
+			"openspec/changes/demo-change/tasks.md": "# Tasks\n\n- [x] 1.1 Done\n- [x] 1.2 Also done\n",
+		},
+	})
+
+	done, approved := runCanonical(t, server, project)
+
+	if len(approved) != 2 {
+		t.Fatalf("expected approvals for propose and merge, got %v", approved)
 	}
 	if done.Change != "demo-change" {
 		t.Fatalf("resolved change = %q", done.Change)
 	}
 
-	if len(approved) != 2 {
-		t.Fatalf("expected approvals for propose and merge, got %v", approved)
+	// The canonical path now routes: with no findings file the gate takes the
+	// clean edge and the fix node never runs.
+	gate := done.Node("review_gate")
+	if gate == nil || gate.Status != orchestrator.NodeCompleted || gate.Outcome != "clean" {
+		t.Fatalf("review_gate = %+v", gate)
+	}
+	if fix := done.Node("fix"); fix == nil || fix.Status != orchestrator.NodeSkipped {
+		t.Fatalf("fix = %+v", fix)
+	}
+	if tests := done.Node("tests"); tests == nil || tests.Status != orchestrator.NodeCompleted {
+		t.Fatalf("tests = %+v", tests)
 	}
 
-	for _, nodeID := range []string{"explore", "propose", "apply", "verify", "merge"} {
+	for _, nodeID := range []string{"explore", "propose", "apply", "tests", "verify", "merge"} {
 		record := done.Node(nodeID)
 		if record == nil || record.Status != orchestrator.NodeCompleted {
 			t.Fatalf("node %s = %+v", nodeID, record)
@@ -166,6 +201,37 @@ func TestCanonicalWorkflowEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(string(events), `"type":"run.completed"`) {
 		t.Fatalf("event log lacks the terminal event")
+	}
+}
+
+// A run whose worktree carries review findings routes into fix instead.
+// The mock script writes on one node, so the findings file is left with the
+// change itself; what the gate checks is the file, not who wrote it.
+func TestCanonicalWorkflowRoutesToFix(t *testing.T) {
+	project := canonicalWorkflowProject(t)
+
+	server := canonicalServer(t, project, mock.Script{
+		WritesOn: "propose",
+		Writes: map[string]string{
+			"openspec/changes/demo-change/tasks.md": "# Tasks\n\n- [x] 1.1 Done\n",
+			".specflow/review.md":                   "## Missing test\nCover the new branch.\n",
+		},
+	})
+
+	done, _ := runCanonical(t, server, project)
+
+	gate := done.Node("review_gate")
+	if gate == nil || gate.Status != orchestrator.NodeCompleted || gate.Outcome != "issues" {
+		t.Fatalf("review_gate = %+v", gate)
+	}
+	if gate.ExitCode != 1 {
+		t.Fatalf("review_gate exit code = %d", gate.ExitCode)
+	}
+	for _, nodeID := range []string{"review", "fix", "tests", "verify", "merge"} {
+		record := done.Node(nodeID)
+		if record == nil || record.Status != orchestrator.NodeCompleted {
+			t.Fatalf("node %s = %+v", nodeID, record)
+		}
 	}
 }
 

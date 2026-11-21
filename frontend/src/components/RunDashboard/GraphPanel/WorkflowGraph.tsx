@@ -9,6 +9,7 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { deriveGraphEdges } from "../../../graph/edgeState";
 import { deriveNodeState } from "../../../graph/nodeState";
 import { layoutGraph } from "../../../graph/layout";
 import type { RunGraph } from "../../../types/graph";
@@ -64,17 +65,19 @@ export function WorkflowGraph({
 
   const edges = useMemo<Edge[]>(
     () =>
-      graph.edges.map((edge, index) => {
-        const target = runNodes.get(edge.to);
-        return {
-          id: `${edge.from}->${edge.to}-${index}`,
-          source: edge.from,
-          target: edge.to,
-          type: "smoothstep",
-          animated: run.pending?.nodeId === edge.to || target?.status === "running",
-        };
-      }),
-    [graph.edges, runNodes, run.pending],
+      deriveGraphEdges(graph, run).map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        type: "smoothstep",
+        // The condition is the edge's label; the state is its class, so a
+        // branch the run did not take reads as passed over.
+        ...(edge.label ? { label: edge.label } : {}),
+        animated: edge.animated,
+        className: `run-edge run-edge--${edge.state}`,
+        data: { state: edge.state },
+      })),
+    [graph, run],
   );
 
   const [instance, setInstance] = useState<ReactFlowInstance | null>(null);

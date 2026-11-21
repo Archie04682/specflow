@@ -25,6 +25,14 @@ function stubCatalogs(options: Options = {}) {
     if (parsed.pathname === "/api/workflows") {
       return fakeResponse(200, { workflows: options.workflows?.[project] ?? [] });
     }
+    if (parsed.pathname === "/api/project/repository") {
+      return fakeResponse(200, {
+        repository: true,
+        branch: "main",
+        hasCommit: true,
+        vcs: "git",
+      });
+    }
     return fakeResponse(404, { error: "unexpected" });
   });
 }
@@ -81,6 +89,88 @@ describe("ControlPanel", () => {
         name: "Open flow Standard feature",
       }),
     ).toBeInTheDocument();
+  });
+
+  it("offers to create a repository instead of chats and flows", async () => {
+    const user = userEvent.setup();
+    let isRepository = false;
+    const fetchMock = stubFetch((url, init) => {
+      const parsed = new URL(String(url), "http://localhost");
+      const project = parsed.searchParams.get("project") ?? "";
+      if (parsed.pathname === "/api/project/repository") {
+        if (init?.method === "POST") {
+          isRepository = true;
+          return fakeResponse(200, { path: project, branch: "main" });
+        }
+        return fakeResponse(
+          200,
+          isRepository
+            ? { repository: true, branch: "main", hasCommit: false }
+            : { repository: false, hasCommit: false, reason: "not a git repository" },
+        );
+      }
+      if (parsed.pathname === "/api/runs") {
+        return fakeResponse(200, []);
+      }
+      if (parsed.pathname === "/api/workflows") {
+        return fakeResponse(200, { workflows: [] });
+      }
+      return fakeResponse(404, { error: "unexpected" });
+    });
+
+    renderPanel({ projects: ["/plain"], activeProject: "/plain" });
+
+    expect(
+      await screen.findByRole("button", { name: "Create git repository" }),
+    ).toBeInTheDocument();
+    // Two sections that could only report an error are not rendered.
+    expect(screen.queryByText("Chats")).not.toBeInTheDocument();
+    expect(screen.queryByText("Flows")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Create git repository" }));
+
+    // Creating the repository refreshes the project reads, so the leaves take
+    // the action's place.
+    expect(await screen.findByText("Chats")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Create git repository" }),
+    ).not.toBeInTheDocument();
+
+    const posted = fetchMock.mock.calls.some(
+      (call) =>
+        String(call[0]).includes("/api/project/repository") &&
+        (call[1] as RequestInit | undefined)?.method === "POST",
+    );
+    expect(posted).toBe(true);
+  });
+
+  it("keeps the leaves for a folder project without a repository", async () => {
+    stubFetch((url) => {
+      const parsed = new URL(String(url), "http://localhost");
+      if (parsed.pathname === "/api/project/repository") {
+        return fakeResponse(200, {
+          repository: false,
+          hasCommit: false,
+          reason: "not a git repository",
+          vcs: "folder",
+        });
+      }
+      if (parsed.pathname === "/api/runs") {
+        return fakeResponse(200, []);
+      }
+      if (parsed.pathname === "/api/workflows") {
+        return fakeResponse(200, { workflows: [] });
+      }
+      return fakeResponse(404, { error: "unexpected" });
+    });
+
+    renderPanel({ projects: ["/plain"], activeProject: "/plain" });
+
+    expect(await screen.findByText("Chats")).toBeInTheDocument();
+    expect(screen.getByText("Flows")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Create git repository" }),
+    ).not.toBeInTheDocument();
   });
 
   it("collapses and expands a project node", async () => {

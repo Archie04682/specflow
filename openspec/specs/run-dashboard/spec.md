@@ -39,16 +39,22 @@ The project root SHALL be an absolute path entered once and retained across relo
 
 ### Requirement: The graph shows the workflow's authored topology
 
-The graph SHALL be built from the run's graph projection, preserving the authored nodes and edges, and SHALL NOT infer structure from the run's node records or their order. Each node SHALL show its title and kind.
+The graph SHALL be built from the run's graph projection, preserving the authored nodes and edges, and SHALL NOT infer structure from the run's node records or their order. Each node SHALL show its title and kind, and each conditioned edge SHALL show the label it declares.
 
 #### Scenario: A branch is drawn as a branch
+
 - **WHEN** the run's graph contains a branch and a join
 - **THEN** the rendered graph shows those edges instead of a single chain
 
+#### Scenario: A conditioned edge is labelled
+
+- **WHEN** the run's graph carries an edge with a condition
+- **THEN** the edge is drawn with that label
+
 #### Scenario: An unavailable graph does not hide the stream
+
 - **WHEN** the graph projection cannot be read
 - **THEN** the run view still shows the event stream and states that the graph is unavailable
-
 ### Requirement: Node visuals track execution state
 
 Each node SHALL show its state among pending, running, completed, failed, waiting for approval, waiting for an answer, cancelled, skipped, or not run. Waiting for an answer SHALL be derived from the run's pending interaction because the node itself remains running, and a node still pending in a terminal run SHALL read as not run.
@@ -191,20 +197,47 @@ The dock SHALL show a pending approval's node, action, attempt, and deadline, SH
 
 ### Requirement: Run controls act only when the run permits
 
-The dashboard SHALL offer cancellation while a run is running, resume for a failed or cancelled run, and retry only for a failed node. It SHALL confirm cancellation, SHALL surface refusals, and SHALL reopen the event stream after a retry or resume so subsequent events are received.
+The dashboard SHALL offer cancellation while a run is running, resume for a
+failed or cancelled run, and retry only for a failed node. For a completed
+folder run whose changes are not applied it SHALL offer applying and discarding
+them; a failed or cancelled folder run SHALL offer discarding. It SHALL confirm
+the discard and report what applying wrote and deleted. It SHALL surface
+refusals, and SHALL reopen the event stream after a retry or resume so
+subsequent events are received.
 
 #### Scenario: Cancellation is confirmed
+
 - **WHEN** the operator cancels a running run
 - **THEN** a confirmation is required before the request is sent
 
 #### Scenario: A retry reopens the stream
+
 - **WHEN** a retry or resume is accepted
 - **THEN** the stream reconnects after the last received event
 
 #### Scenario: A refused control is reported
+
 - **WHEN** a control is refused because the run's state does not permit it
 - **THEN** the refusal is shown and the run is refreshed
 
+#### Scenario: A folder run offers apply and discard
+
+- **WHEN** the operator opens a completed folder run that is not applied
+- **THEN** applying and discarding are offered and the run says its changes are not in the project yet
+
+#### Scenario: Applying reports its files
+
+- **WHEN** an apply succeeds
+- **THEN** the written and deleted paths are shown and the run reports that it was applied
+
+#### Scenario: A failed folder run can be discarded
+- **WHEN** the operator opens a failed folder run
+- **THEN** discarding is offered, because the run still holds the project's copy
+
+#### Scenario: Discarding is confirmed
+
+- **WHEN** the operator discards a folder run's changes
+- **THEN** a confirmation is required before the request is sent
 ### Requirement: Past runs are listed and reviewable
 
 The dashboard SHALL list the project's runs newest first with status, workflow, objective, start time, and node progress, SHALL open a selected run with its graph and full event history, and SHALL show its final status, per-node results, checkpoints, and error when present.
@@ -510,3 +543,23 @@ truncated, or elided. Choosing a wrapped option SHALL send that option's full te
 
 - **WHEN** the operator chooses an option whose label wrapped
 - **THEN** that option's full text is sent as the answer
+
+### Requirement: The graph marks the edge that was taken
+
+The graph SHALL mark each edge that was taken, using the route labels recorded on completed nodes and the conditions in the run's graph projection, and SHALL distinguish a taken edge from an edge that was not taken. Marking SHALL NOT move a node.
+
+#### Scenario: The untaken branch is marked
+
+- **WHEN** a gate completed under `clean` and one of its outgoing edges is labelled `issues`
+- **THEN** the `issues` edge reads as not taken while the `clean` edge reads as taken
+- **AND** no node moves
+
+#### Scenario: An unconditional edge is taken
+
+- **WHEN** an edge declares no condition and its source completed
+- **THEN** the edge reads as taken
+
+#### Scenario: A branched run never draws the untaken path as run
+
+- **WHEN** a run completed with a skipped branch
+- **THEN** the skipped branch's edges and nodes read as not run rather than as pending

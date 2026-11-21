@@ -49,6 +49,20 @@ func fullWorkflowDraft() WorkflowDraft {
 				},
 			},
 			{
+				ID:      "review_gate",
+				Title:   "Review gate",
+				Kind:    NodeKindCommand,
+				Command: "test ! -s .specflow/review.md",
+				Routes:  map[int]string{0: "clean", 1: "issues"},
+			},
+			{
+				ID:      "fix",
+				Title:   "Fix",
+				Kind:    NodeKindAgent,
+				Harness: "pi",
+				Prompt:  "Fix every issue in .specflow/review.md.",
+			},
+			{
 				ID:              "verify",
 				Title:           "Verify",
 				Kind:            NodeKindCommand,
@@ -61,7 +75,12 @@ func fullWorkflowDraft() WorkflowDraft {
 				Postcondition:   &Postcondition{Type: "exit_zero"},
 			},
 		},
-		Edges: []WorkflowEdgeDraft{{From: "explore", To: "verify"}},
+		Edges: []WorkflowEdgeDraft{
+			{From: "explore", To: "review_gate"},
+			{From: "review_gate", To: "fix", When: "issues"},
+			{From: "review_gate", To: "verify", When: "clean"},
+			{From: "fix", To: "verify"},
+		},
 	}
 }
 
@@ -448,5 +467,28 @@ func TestDraftCarriesMultipleSkillsAndMarshalsThemAsAList(t *testing.T) {
 	roundTrip := draftFromWorkflow(workflow)
 	if len(roundTrip.Nodes[0].Skills) != 2 {
 		t.Fatalf("draft skills = %#v", roundTrip.Nodes[0].Skills)
+	}
+}
+
+func TestMarshalWorkflowYAMLCarriesRoutesAndConditions(t *testing.T) {
+	data, err := MarshalWorkflowYAML(fullWorkflowDraft())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	text := string(data)
+
+	for _, fragment := range []string{"routes:", "0: clean", "1: issues", "when: issues", "when: clean"} {
+		if !strings.Contains(text, fragment) {
+			t.Fatalf("canonical YAML has no %q:\n%s", fragment, text)
+		}
+	}
+	// Exit codes are rendered in ascending order so the file is canonical.
+	if strings.Index(text, "0: clean") > strings.Index(text, "1: issues") {
+		t.Fatalf("route codes are not rendered in ascending order:\n%s", text)
+	}
+	for _, leaked := range []string{"routes:", "when:"} {
+		if strings.Contains(text, `"routes"`) || strings.Contains(text, `"when"`) {
+			t.Fatalf("canonical YAML quotes %q:\n%s", leaked, text)
+		}
 	}
 }

@@ -52,12 +52,14 @@ type WorkflowNodeDraft struct {
 	Retry           int            `json:"retry,omitempty"`
 	Tools           []string       `json:"tools,omitempty"`
 	Postcondition   *Postcondition `json:"postcondition,omitempty"`
+	Routes          map[int]string `json:"routes,omitempty"`
 }
 
 // WorkflowEdgeDraft is one authored ordering edge.
 type WorkflowEdgeDraft struct {
 	From string `json:"from"`
 	To   string `json:"to"`
+	When string `json:"when,omitempty"`
 }
 
 // ModelDraft is a model selection: a bare identifier, or an identifier with a
@@ -97,7 +99,7 @@ func draftFromWorkflow(workflow *Workflow) WorkflowDraft {
 		draft.Nodes = append(draft.Nodes, nodeDraftFromWorkflow(node))
 	}
 	for _, edge := range workflow.Edges {
-		draft.Edges = append(draft.Edges, WorkflowEdgeDraft{From: edge.From, To: edge.To})
+		draft.Edges = append(draft.Edges, WorkflowEdgeDraft{From: edge.From, To: edge.To, When: edge.When})
 	}
 	return draft
 }
@@ -118,7 +120,7 @@ func workflowFromDraft(draft WorkflowDraft) *Workflow {
 		workflow.Nodes = append(workflow.Nodes, nodeFromDraft(node))
 	}
 	for _, edge := range draft.Edges {
-		workflow.Edges = append(workflow.Edges, Edge{From: edge.From, To: edge.To})
+		workflow.Edges = append(workflow.Edges, Edge{From: edge.From, To: edge.To, When: edge.When})
 	}
 	return workflow
 }
@@ -176,6 +178,9 @@ func nodeDraftFromWorkflow(node Node) WorkflowNodeDraft {
 		postcondition := *node.Postcondition
 		draft.Postcondition = &postcondition
 	}
+	if len(node.Routes) > 0 {
+		draft.Routes = copyRoutes(node.Routes)
+	}
 	return draft
 }
 
@@ -207,7 +212,20 @@ func nodeFromDraft(draft WorkflowNodeDraft) Node {
 		postcondition := *draft.Postcondition
 		node.Postcondition = &postcondition
 	}
+	if len(draft.Routes) > 0 {
+		node.Routes = copyRoutes(draft.Routes)
+	}
 	return node
+}
+
+// copyRoutes returns an independent copy of a route map, so a draft and the
+// workflow it came from never share one.
+func copyRoutes(routes map[int]string) map[int]string {
+	copied := make(map[int]string, len(routes))
+	for code, label := range routes {
+		copied[code] = label
+	}
+	return copied
 }
 
 // modelDraftFromValue keeps an empty model absent rather than an empty object.
@@ -283,12 +301,14 @@ type nodeFileDocument struct {
 	Retry           int            `yaml:"retry,omitempty"`
 	Tools           []string       `yaml:"tools,omitempty"`
 	Postcondition   *Postcondition `yaml:"postcondition,omitempty"`
+	Routes          map[int]string `yaml:"routes,omitempty"`
 }
 
 // edgeFileDocument is the canonical YAML shape of an ordering edge.
 type edgeFileDocument struct {
 	From string `yaml:"from"`
 	To   string `yaml:"to"`
+	When string `yaml:"when,omitempty"`
 }
 
 // modelFile renders a model selection: a scalar when there is no reasoning
@@ -338,7 +358,7 @@ func workflowDocumentFromDraft(draft WorkflowDraft) workflowFileDocument {
 		document.Nodes = append(document.Nodes, nodeDocumentFromDraft(node))
 	}
 	for _, edge := range draft.Edges {
-		document.Edges = append(document.Edges, edgeFileDocument{From: edge.From, To: edge.To})
+		document.Edges = append(document.Edges, edgeFileDocument{From: edge.From, To: edge.To, When: edge.When})
 	}
 	return document
 }
@@ -389,6 +409,9 @@ func nodeDocumentFromDraft(draft WorkflowNodeDraft) nodeFileDocument {
 	if draft.Postcondition != nil {
 		postcondition := *draft.Postcondition
 		document.Postcondition = &postcondition
+	}
+	if len(draft.Routes) > 0 {
+		document.Routes = copyRoutes(draft.Routes)
 	}
 	return document
 }

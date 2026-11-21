@@ -66,6 +66,10 @@ type Engine struct {
 
 	mu   sync.Mutex
 	live map[string]*liveRun
+	// folderMu serializes a folder project's copy creation, apply, and discard
+	// with each other, so the one-run-per-project check cannot be raced and a
+	// run's copy cannot be applied twice.
+	folderMu sync.Mutex
 	// reconcileMu serializes repair of runs that have no live execution, so
 	// concurrent observations cannot repair one run twice.
 	reconcileMu sync.Mutex
@@ -132,9 +136,27 @@ func (e *Engine) Create(ctx context.Context, request CreateRequest) (*Run, error
 	if err != nil {
 		return nil, err
 	}
-	// Refuse before touching anything: a dirty project has no meaningful base.
-	if err := project.CheckIsolatable(ctx); err != nil {
+	mode, err := project.Mode()
+	if err != nil {
 		return nil, err
+	}
+	switch mode {
+	case workspace.ModeGit:
+		// Refuse before touching anything: a dirty project has no meaningful base.
+		if err := project.CheckIsolatable(ctx); err != nil {
+			return nil, err
+		}
+	case workspace.ModeFolder:
+		// A folder project applies one run at a time, so an unfinished run holds
+		// the project until it is applied or discarded. The check and the copy
+		// are taken under one mutex, or two requests could both pass it.
+		e.folderMu.Lock()
+		defer e.folderMu.Unlock()
+		if err := e.checkFolderLock(project); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("project has unknown workspace mode %q", mode)
 	}
 	if err := project.EnsureLayout(); err != nil {
 		return nil, err
@@ -143,6 +165,11 @@ func (e *Engine) Create(ctx context.Context, request CreateRequest) (*Run, error
 	plan, workflowPath, source, err := compileWorkflow(project, request.Workflow)
 	if err != nil {
 		return nil, err
+	}
+	if mode == workspace.ModeFolder {
+		if err := refuseProjectWorkdir(plan); err != nil {
+			return nil, err
+		}
 	}
 
 	baseline, err := openspec.ListChanges(project.Root)
@@ -156,7 +183,12 @@ func (e *Engine) Create(ctx context.Context, request CreateRequest) (*Run, error
 		cleanupIncompleteRun(ctx, project, runID)
 		return nil, err
 	}
-	worktree, err := e.createWorktree(ctx, project, runID)
+	var worktree *workspace.Worktree
+	if mode == workspace.ModeFolder {
+		worktree, err = project.CreateFolderWorkspace(ctx, runID)
+	} else {
+		worktree, err = e.createWorktree(ctx, project, runID)
+	}
 	if err != nil {
 		cleanupIncompleteRun(ctx, project, runID)
 		return nil, err
@@ -169,6 +201,7 @@ func (e *Engine) Create(ctx context.Context, request CreateRequest) (*Run, error
 		WorkflowPath:     workflowPath,
 		WorkflowSnapshot: snapshotPath,
 		Status:           RunPending,
+		VCS:              mode,
 		Objective:        request.Objective,
 		ChangeBaseline:   baseline,
 		Nodes:            newNodeRuns(plan),
@@ -225,10 +258,44 @@ func compileWorkflow(project *workspace.Project, reference string) (*WorkflowPla
 // never persisted. It is best-effort: the caller already holds a failure. A
 // worktree is unregistered before its branch is deleted.
 func cleanupIncompleteRun(ctx context.Context, project *workspace.Project, runID string) {
-	_ = project.RemoveWorktree(ctx, project.WorktreeDir(runID))
-	_ = os.RemoveAll(project.WorktreeDir(runID))
+	if mode, err := project.Mode(); err == nil && mode == workspace.ModeFolder {
+		_ = os.RemoveAll(project.WorktreeDir(runID))
+		_ = os.RemoveAll(filepath.Join(project.RunDir(runID), "snapshots"))
+	} else {
+		_ = project.RemoveWorktree(ctx, project.WorktreeDir(runID))
+		_ = os.RemoveAll(project.WorktreeDir(runID))
+		_, _ = project.Git(ctx, "branch", "-D", project.RunBranch(runID))
+	}
 	_ = os.RemoveAll(project.RunDir(runID))
-	_, _ = project.Git(ctx, "branch", "-D", project.RunBranch(runID))
+}
+
+// checkFolderLock refuses a folder run while another one holds the project.
+func (e *Engine) checkFolderLock(project *workspace.Project) error {
+	runs, err := NewStore(project).List()
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		if run.VCS != workspace.ModeFolder {
+			continue
+		}
+		if run.Apply == RunApplyApplied || run.Apply == RunApplyDiscarded {
+			continue
+		}
+		return fmt.Errorf("run %s still holds this project: apply or discard it first", run.ID)
+	}
+	return nil
+}
+
+// refuseProjectWorkdir refuses a folder flow that would run a node in the
+// project directory, outside the copy the run is isolated in.
+func refuseProjectWorkdir(plan *WorkflowPlan) error {
+	for _, node := range plan.Nodes {
+		if node.Workdir == WorkdirProject {
+			return fmt.Errorf("node %q runs in the project directory, which a folder run cannot isolate", node.ID)
+		}
+	}
+	return nil
 }
 
 // Start launches the run's execution in the background.
@@ -240,7 +307,7 @@ func (e *Engine) Start(ctx context.Context, projectRoot, runID string) error {
 	if _, err := e.planFor(live, false); err != nil {
 		return err
 	}
-	return e.launch(live, 0)
+	return e.launch(live)
 }
 
 // Get returns a snapshot of a run.
@@ -570,6 +637,9 @@ func (e *Engine) Inject(ctx context.Context, projectRoot, runID, text string) (s
 
 // Discard removes a run's worktree, keeping its record and branch.
 func (e *Engine) Discard(ctx context.Context, projectRoot, runID string) error {
+	e.folderMu.Lock()
+	defer e.folderMu.Unlock()
+
 	live, err := e.inspect(ctx, projectRoot, runID)
 	if err != nil {
 		return err
@@ -577,16 +647,70 @@ func (e *Engine) Discard(ctx context.Context, projectRoot, runID string) error {
 
 	live.mu.Lock()
 	running := live.running
-	path := live.worktree.Path
+	worktree := live.worktree
 	live.mu.Unlock()
 	if running {
 		return fmt.Errorf("run %s is still running", runID)
 	}
 
-	return live.project.RemoveWorktree(ctx, path)
+	if err := worktree.Release(ctx); err != nil {
+		return err
+	}
+	if worktree.Mode == workspace.ModeFolder {
+		e.setRun(live, func(run *Run) { run.Apply = RunApplyDiscarded })
+		e.save(live)
+	}
+	return nil
 }
 
-func (e *Engine) launch(live *liveRun, startIndex int) error {
+// Apply writes a completed folder run's changes into the project and releases
+// its workspace. A git run is refused: its result is merged, not applied.
+func (e *Engine) Apply(ctx context.Context, projectRoot, runID string) (workspace.ApplyReport, error) {
+	e.folderMu.Lock()
+	defer e.folderMu.Unlock()
+
+	live, err := e.inspect(ctx, projectRoot, runID)
+	if err != nil {
+		return workspace.ApplyReport{}, err
+	}
+
+	live.mu.Lock()
+	running := live.running
+	run := live.run
+	mode := live.worktree.Mode
+	status := run.Status
+	apply := run.Apply
+	live.mu.Unlock()
+
+	if running {
+		return workspace.ApplyReport{}, fmt.Errorf("run %s is still running", runID)
+	}
+	if mode != workspace.ModeFolder {
+		return workspace.ApplyReport{}, errors.New("only a folder run has changes to apply")
+	}
+	if status != RunCompleted {
+		return workspace.ApplyReport{}, fmt.Errorf("run %s is %s, not completed", runID, status)
+	}
+	if apply == RunApplyApplied {
+		return workspace.ApplyReport{}, fmt.Errorf("run %s was already applied", runID)
+	}
+	if apply == RunApplyDiscarded {
+		return workspace.ApplyReport{}, fmt.Errorf("run %s was discarded", runID)
+	}
+
+	report, err := live.project.ApplyRun(ctx, runID)
+	if err != nil {
+		return workspace.ApplyReport{}, err
+	}
+	if err := live.worktree.Release(ctx); err != nil {
+		return report, err
+	}
+	e.setRun(live, func(run *Run) { run.Apply = RunApplyApplied })
+	e.save(live)
+	return report, nil
+}
+
+func (e *Engine) launch(live *liveRun) error {
 	live.mu.Lock()
 	if live.plan == nil {
 		live.mu.Unlock()
@@ -637,12 +761,16 @@ func (e *Engine) launch(live *liveRun, startIndex int) error {
 			live.mu.Unlock()
 			close(done)
 		}()
-		e.runFrom(ctx, live, startIndex)
+		e.runFrom(ctx, live)
 	}()
 	return nil
 }
 
-func (e *Engine) runFrom(ctx context.Context, live *liveRun, startIndex int) {
+// runFrom executes the compiled plan as a readiness walk: a node resolves once
+// every predecessor has resolved, and it runs only when at least one incoming
+// edge was taken. plan.Order is the tie-break among ready nodes, so a workflow
+// that declares no routes runs exactly as it did when the order was the plan.
+func (e *Engine) runFrom(ctx context.Context, live *liveRun) {
 	live.mu.Lock()
 	plan := live.plan
 	live.mu.Unlock()
@@ -650,7 +778,6 @@ func (e *Engine) runFrom(ctx context.Context, live *liveRun, startIndex int) {
 		e.failRun(live, "", errors.New("run has no compiled workflow"))
 		return
 	}
-	order := plan.Order
 
 	e.setRun(live, func(run *Run) {
 		run.Status = RunRunning
@@ -664,39 +791,154 @@ func (e *Engine) runFrom(ctx context.Context, live *liveRun, startIndex int) {
 		"objective":  live.run.Objective,
 	})
 
-	for index := startIndex; index < len(order); index++ {
-		if ctx.Err() != nil {
+	nodeID, err := e.walk(ctx, live, plan)
+	if err != nil {
+		switch {
+		case errors.Is(err, errApprovalRejected):
 			e.finishCancelled(live)
-			return
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			e.finishCancelled(live)
+		default:
+			// Record skipped nodes before the terminal status: a reader that
+			// sees "failed" must never find a node still "pending".
+			e.skipUnresolved(live, plan)
+			e.failRun(live, nodeID, err)
 		}
-
-		nodeID := order[index]
-		node := plan.Node(nodeID)
-		if node == nil {
-			e.failRun(live, nodeID, fmt.Errorf("node %q disappeared from the workflow", nodeID))
-			return
-		}
-		if e.nodeStatus(live, nodeID) == NodeCompleted {
-			continue
-		}
-
-		if err := e.executeNode(ctx, live, node); err != nil {
-			switch {
-			case errors.Is(err, errApprovalRejected):
-				e.finishCancelled(live)
-			case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-				e.finishCancelled(live)
-			default:
-				// Record skipped nodes before the terminal status: a reader
-				// that sees "failed" must never find a node still "pending".
-				e.skipRemaining(live, order[index+1:])
-				e.failRun(live, nodeID, err)
-			}
-			return
-		}
+		return
 	}
 
 	e.finishCompleted(live)
+}
+
+// walk resolves the plan and executes every node a taken edge reaches. It
+// returns the node that failed, or an empty identifier for a run-level failure.
+// Every node ends resolved: completed, skipped, or failed.
+func (e *Engine) walk(ctx context.Context, live *liveRun, plan *WorkflowPlan) (string, error) {
+	// The compiled order is derived from the plan's nodes, so a missing one is
+	// a corrupt plan rather than a workflow defect; report it, never skip it.
+	for _, id := range plan.Order {
+		if plan.Node(id) == nil {
+			return id, fmt.Errorf("node %q disappeared from the workflow", id)
+		}
+	}
+
+	state := newWalkState(plan)
+
+	// Pin what already happened: a completed node is resolved, and its recorded
+	// route label replays the edge it took, so a resumed run needs no frontier.
+	for _, id := range plan.Order {
+		if e.nodeStatus(live, id) != NodeCompleted {
+			continue
+		}
+		node := plan.Node(id)
+		if node == nil {
+			continue
+		}
+		label := e.recordedRoute(live, id)
+		if len(node.Routes) > 0 {
+			switch {
+			case label == "":
+				return id, fmt.Errorf("node %q completed without a recorded route", id)
+			case !declaresRoute(node, label):
+				// A label the node does not declare cannot select an edge, and
+				// guessing one would silently drop the rest of the branch.
+				return id, fmt.Errorf("node %q completed under route %q, which it does not declare", id, label)
+			}
+		}
+		state.resolved[id] = true
+		state.release(plan, node, label, true)
+	}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		node := state.next(plan)
+		if node == nil {
+			return "", nil
+		}
+		if !state.arrived[node.ID] {
+			e.skipNode(live, node.ID)
+			state.resolved[node.ID] = true
+			state.release(plan, node, "", false)
+			continue
+		}
+		if err := e.executeNode(ctx, live, node); err != nil {
+			return node.ID, err
+		}
+		state.resolved[node.ID] = true
+		state.release(plan, node, e.recordedRoute(live, node.ID), true)
+	}
+}
+
+// walkState is one pass's readiness bookkeeping: how many predecessors each
+// node still waits for, whether any taken edge reached it, and whether it has
+// ended.
+type walkState struct {
+	waiting  map[string]int
+	arrived  map[string]bool
+	resolved map[string]bool
+}
+
+func newWalkState(plan *WorkflowPlan) *walkState {
+	state := &walkState{
+		waiting:  make(map[string]int, len(plan.Nodes)),
+		arrived:  make(map[string]bool, len(plan.Nodes)),
+		resolved: make(map[string]bool, len(plan.Nodes)),
+	}
+	for _, node := range plan.Nodes {
+		state.waiting[node.ID] = 0
+	}
+	for _, edge := range plan.Edges {
+		state.waiting[edge.To]++
+	}
+	for _, node := range plan.Nodes {
+		// A node nothing precedes is reached without an edge.
+		if state.waiting[node.ID] == 0 {
+			state.arrived[node.ID] = true
+		}
+	}
+	return state
+}
+
+// next returns the unresolved node whose predecessors have all resolved,
+// choosing the earliest in the compiled order so execution stays deterministic.
+func (s *walkState) next(plan *WorkflowPlan) *PlanNode {
+	for _, id := range plan.Order {
+		if s.resolved[id] || s.waiting[id] > 0 {
+			continue
+		}
+		if node := plan.Node(id); node != nil {
+			return node
+		}
+	}
+	return nil
+}
+
+// release releases a resolved node's targets and marks the edges it took. A
+// node that declares routes takes only the edge matching the label it completed
+// under; every other completed node takes all of its edges; a skipped node
+// takes none.
+func (s *walkState) release(plan *WorkflowPlan, node *PlanNode, label string, completed bool) {
+	for _, edge := range plan.Outgoing(node.ID) {
+		s.waiting[edge.To]--
+		if !completed {
+			continue
+		}
+		if len(node.Routes) == 0 || edge.When == label {
+			s.arrived[edge.To] = true
+		}
+	}
+}
+
+// declaresRoute reports whether a node routes under a label.
+func declaresRoute(node *PlanNode, label string) bool {
+	for _, declared := range node.Routes {
+		if declared == label {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) executeNode(ctx context.Context, live *liveRun, node *PlanNode) error {
@@ -730,6 +972,7 @@ func (e *Engine) beginAttempt(live *liveRun, node *PlanNode, attempt int) {
 		record.Error = ""
 		record.FailureClass = ""
 		record.ExitCode = 0
+		record.Outcome = ""
 	})
 	e.setRun(live, func(run *Run) {
 		run.Status = RunRunning
@@ -759,9 +1002,7 @@ func (e *Engine) beginAttemptCycle(ctx context.Context, live *liveRun, node *Pla
 // previousAttempts reads the attempt count a resumed or retried node carries,
 // so a new execution continues the numbering instead of restarting at one.
 func (e *Engine) previousAttempts(live *liveRun, nodeID string) int {
-	live.mu.Lock()
-	defer live.mu.Unlock()
-	if record := live.run.Node(nodeID); record != nil {
+	if record := e.nodeRecord(live, nodeID); record != nil {
 		return record.Attempts
 	}
 	return 0
@@ -784,9 +1025,9 @@ func (e *Engine) runAttempts(ctx context.Context, live *liveRun, node *PlanNode,
 			return err
 		}
 
-		checkpoint, err := e.attemptNode(ctx, live, node, workdir, &runContext, failureText)
+		checkpoint, route, err := e.attemptNode(ctx, live, node, workdir, &runContext, failureText)
 		if err == nil {
-			e.completeNode(live, node, checkpoint, runContext.Change)
+			e.completeNode(live, node, checkpoint, runContext.Change, route)
 			return nil
 		}
 		if ctx.Err() != nil {
@@ -807,7 +1048,7 @@ func (e *Engine) runAttempts(ctx context.Context, live *liveRun, node *PlanNode,
 // attemptNode executes one attempt and, when it succeeds, records the
 // checkpoint and checks the postcondition. A resolved change is written back
 // so a retry and later nodes see it.
-func (e *Engine) attemptNode(ctx context.Context, live *liveRun, node *PlanNode, workdir string, runContext *RunContext, failureText string) (string, error) {
+func (e *Engine) attemptNode(ctx context.Context, live *liveRun, node *PlanNode, workdir string, runContext *RunContext, failureText string) (string, string, error) {
 	outcome, err := e.executeOnce(ctx, live, node, workdir, *runContext, failureText)
 	e.updateNode(live, node.ID, func(record *NodeRun) {
 		record.Text = outcome.Text
@@ -817,12 +1058,12 @@ func (e *Engine) attemptNode(ctx context.Context, live *liveRun, node *PlanNode,
 		record.Usage = outcome.Usage
 	})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	checkpoint, err := live.worktree.Checkpoint(ctx, node.ID)
 	if err != nil {
-		return "", fmt.Errorf("checkpoint node %s: %w", node.ID, err)
+		return "", "", fmt.Errorf("checkpoint node %s: %w", node.ID, err)
 	}
 	e.updateNode(live, node.ID, func(record *NodeRun) { record.Checkpoint = checkpoint })
 	e.recordCheckpoint(live, node.ID, checkpoint)
@@ -837,20 +1078,21 @@ func (e *Engine) attemptNode(ctx context.Context, live *liveRun, node *PlanNode,
 		Context:  *runContext,
 	})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if change != "" {
 		e.setChange(live, change)
 		runContext.Change = change
 	}
-	return checkpoint, nil
+	return checkpoint, outcome.Route, nil
 }
 
 // completeNode publishes a successful node.
-func (e *Engine) completeNode(live *liveRun, node *PlanNode, checkpoint, change string) {
+func (e *Engine) completeNode(live *liveRun, node *PlanNode, checkpoint, change, route string) {
 	ended := e.now()
 	e.updateNode(live, node.ID, func(record *NodeRun) {
 		record.Status = NodeCompleted
+		record.Outcome = route
 		record.EndedAt = &ended
 		record.Error = ""
 	})
@@ -859,11 +1101,15 @@ func (e *Engine) completeNode(live *liveRun, node *PlanNode, checkpoint, change 
 		postcondition = "met"
 	}
 	e.save(live)
-	e.emit(live, "node.completed", node.ID, map[string]any{
+	data := map[string]any{
 		"checkpoint":    checkpoint,
 		"change":        change,
 		"postcondition": postcondition,
-	})
+	}
+	if route != "" {
+		data["route"] = route
+	}
+	e.emit(live, "node.completed", node.ID, data)
 }
 
 type nodeOutcome struct {
@@ -871,7 +1117,9 @@ type nodeOutcome struct {
 	Output   string
 	Command  string
 	ExitCode int
-	Usage    harness.Usage
+	// Route is the label the node completed under, empty when it does not route.
+	Route string
+	Usage harness.Usage
 }
 
 func (e *Engine) executeOnce(ctx context.Context, live *liveRun, node *PlanNode, workdir string, runContext RunContext, failureText string) (nodeOutcome, error) {
@@ -883,7 +1131,7 @@ func (e *Engine) executeOnce(ctx context.Context, live *liveRun, node *PlanNode,
 		if err != nil {
 			return nodeOutcome{}, err
 		}
-		outcome, err := e.runCommand(ctx, live, node.ID, command, workdir, node.Timeout.Duration())
+		outcome, err := e.runCommand(ctx, live, node, command, workdir)
 		// The command ran even when the outcome is a failure; the node record
 		// keeps it so a reloaded run still shows what executed.
 		outcome.Command = command
@@ -959,14 +1207,15 @@ func modelValue(model *harness.Model) harness.Model {
 // process exists; the finished event carries the exit code, the bounded
 // output, and the duration on every path, including a timeout and a
 // cancellation.
-func (e *Engine) runCommand(ctx context.Context, live *liveRun, nodeID, command, workdir string, timeout time.Duration) (nodeOutcome, error) {
+func (e *Engine) runCommand(ctx context.Context, live *liveRun, node *PlanNode, command, workdir string) (nodeOutcome, error) {
 	started := time.Now()
+	nodeID := node.ID
 	e.emit(live, "command.started", nodeID, map[string]any{
 		"command": command,
 		"workdir": workdir,
 	})
 
-	commandCtx, cancel := context.WithTimeout(ctx, timeout)
+	commandCtx, cancel := context.WithTimeout(ctx, node.Timeout.Duration())
 	defer cancel()
 
 	process := exec.CommandContext(commandCtx, "sh", "-c", command)
@@ -993,7 +1242,7 @@ func (e *Engine) runCommand(ctx context.Context, live *liveRun, nodeID, command,
 	}
 	if commandCtx.Err() == context.DeadlineExceeded {
 		finished(-1)
-		return nodeOutcome{ExitCode: -1, Output: output.String()}, fmt.Errorf("command timed out after %s", timeout)
+		return nodeOutcome{ExitCode: -1, Output: output.String()}, fmt.Errorf("command timed out after %s", node.Timeout)
 	}
 
 	exitCode := 0
@@ -1008,6 +1257,11 @@ func (e *Engine) runCommand(ctx context.Context, live *liveRun, nodeID, command,
 	}
 	finished(exitCode)
 
+	// A declared exit code is a route, not a failure: the node completed and
+	// the label selects which edge the run takes next.
+	if label, ok := node.Routes[exitCode]; ok {
+		return nodeOutcome{ExitCode: exitCode, Output: output.String(), Route: label}, nil
+	}
 	if exitCode != 0 {
 		return nodeOutcome{ExitCode: exitCode, Output: output.String()},
 			fmt.Errorf("command %q exited with %d: %s", command, exitCode, truncate(output.String(), 2000))
@@ -1224,9 +1478,14 @@ func approvalAction(node *PlanNode) string {
 }
 
 func (e *Engine) finishCompleted(live *liveRun) {
-	// Release the worktree before publishing the terminal state, so a reader
-	// that sees "completed" never finds a workspace it should no longer have.
-	_ = live.project.RemoveWorktree(context.Background(), live.worktree.Path)
+	// A git run's worktree is released before the terminal state is published,
+	// so a reader that sees "completed" never finds a workspace it should no
+	// longer have. A folder run keeps its copy: the operator applies or
+	// discards it.
+	folder := live.worktree.Mode == workspace.ModeFolder
+	if !folder {
+		_ = live.worktree.Release(context.Background())
+	}
 
 	ended := e.now()
 	e.setRun(live, func(run *Run) {
@@ -1234,6 +1493,9 @@ func (e *Engine) finishCompleted(live *liveRun) {
 		run.CurrentNode = ""
 		run.Pending = nil
 		run.FinishedAt = &ended
+		if folder {
+			run.Apply = RunApplyPending
+		}
 	})
 	e.save(live)
 	snapshot := live.snapshot()
@@ -1283,15 +1545,34 @@ func (e *Engine) failRun(live *liveRun, nodeID string, err error) {
 	e.hub.Seal(live.run.ID)
 }
 
-func (e *Engine) skipRemaining(live *liveRun, ids []string) {
-	for _, id := range ids {
-		if e.nodeStatus(live, id) == NodeCompleted {
+// skipNode reports a node that no taken edge reached. A node already skipped
+// stays as it is, so re-deriving the path on a resume does not republish it.
+func (e *Engine) skipNode(live *liveRun, nodeID string) {
+	if e.nodeStatus(live, nodeID) == NodeSkipped {
+		return
+	}
+	e.updateNode(live, nodeID, func(record *NodeRun) { record.Status = NodeSkipped })
+	e.save(live)
+	e.emit(live, "node.skipped", nodeID, nil)
+}
+
+// skipUnresolved reports every node the run never reached as skipped.
+func (e *Engine) skipUnresolved(live *liveRun, plan *WorkflowPlan) {
+	for _, id := range plan.Order {
+		switch e.nodeStatus(live, id) {
+		case NodeCompleted, NodeFailed, NodeCancelled, NodeSkipped:
 			continue
 		}
-		e.updateNode(live, id, func(record *NodeRun) { record.Status = NodeSkipped })
-		e.emit(live, "node.skipped", id, nil)
+		e.skipNode(live, id)
 	}
-	e.save(live)
+}
+
+// recordedRoute returns the route label a node completed under.
+func (e *Engine) recordedRoute(live *liveRun, nodeID string) string {
+	if record := e.nodeRecord(live, nodeID); record != nil {
+		return record.Outcome
+	}
+	return ""
 }
 
 func (e *Engine) markFailed(live *liveRun, node *PlanNode, err error, class string) {
@@ -1547,12 +1828,14 @@ func (e *Engine) loadRun(ctx context.Context, projectRoot, runID string, cache b
 	live = &liveRun{
 		run:     run,
 		project: project,
-		worktree: &workspace.Worktree{
+		worktree: project.AdoptWorktree(workspace.Worktree{
 			Path:   run.Worktree,
 			Branch: run.Branch,
 			Base:   run.BaseCommit,
 			Source: run.SourceBranch,
-		},
+			Mode:   run.VCS,
+			RunID:  run.ID,
+		}),
 		done: make(chan struct{}),
 	}
 	if !cache {
@@ -1613,6 +1896,11 @@ func (e *Engine) planFor(live *liveRun, refresh bool) (*WorkflowPlan, error) {
 	}
 	if err := planMatchesRun(plan, run); err != nil {
 		return nil, err
+	}
+	if run.VCS == workspace.ModeFolder {
+		if err := refuseProjectWorkdir(plan); err != nil {
+			return nil, err
+		}
 	}
 
 	live.mu.Lock()
@@ -1689,10 +1977,21 @@ func (e *Engine) setChange(live *liveRun, change string) {
 	e.emit(live, "change.resolved", "", map[string]any{"change": change})
 }
 
-func (e *Engine) nodeStatus(live *liveRun, nodeID string) NodeStatus {
+// nodeRecord returns a copy of a node's record, or nil. It copies rather than
+// handing out a pointer into the live slice, which other goroutines mutate.
+func (e *Engine) nodeRecord(live *liveRun, nodeID string) *NodeRun {
 	live.mu.Lock()
 	defer live.mu.Unlock()
-	if record := live.run.Node(nodeID); record != nil {
+	record := live.run.Node(nodeID)
+	if record == nil {
+		return nil
+	}
+	copied := *record
+	return &copied
+}
+
+func (e *Engine) nodeStatus(live *liveRun, nodeID string) NodeStatus {
+	if record := e.nodeRecord(live, nodeID); record != nil {
 		return record.Status
 	}
 	return ""

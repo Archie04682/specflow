@@ -8,9 +8,15 @@ interface RunControlsProps {
   runStatus: RunStatus;
   failedNode?: { nodeId: string; title?: string };
   pendingAction: ActionName | null;
+  /** A completed folder run whose changes are not in the project yet. */
+  awaitingApply?: boolean;
+  /** A folder run whose copy can be discarded (awaiting apply, failed, or cancelled). */
+  discardable?: boolean;
   onRequestCancel: () => void;
   onResume: () => void;
   onRetry: (nodeId: string) => void;
+  onApply?: () => void;
+  onRequestDiscard?: () => void;
 }
 
 const CANCELLABLE: RunStatus[] = ["running", "waiting_approval", "waiting_answer"];
@@ -21,9 +27,13 @@ export function RunControls({
   runStatus,
   failedNode,
   pendingAction,
+  awaitingApply = false,
+  discardable = false,
   onRequestCancel,
   onResume,
   onRetry,
+  onApply,
+  onRequestDiscard,
 }: RunControlsProps) {
   const busy = pendingAction !== null;
   const canCancel = CANCELLABLE.includes(runStatus);
@@ -48,6 +58,20 @@ export function RunControls({
         onClick={() => onRetry(failedNode.nodeId)}
       >
         Retry {failedNode.title ?? shortId(failedNode.nodeId)}
+      </Button>,
+    );
+  }
+  if (awaitingApply) {
+    controls.push(
+      <Button key="apply" variant="primary" size="sm" loading={pendingAction === "apply"} disabled={busy} onClick={onApply}>
+        Apply changes
+      </Button>,
+    );
+  }
+  if (awaitingApply || discardable) {
+    controls.push(
+      <Button key="discard" variant="secondary" size="sm" disabled={busy} onClick={onRequestDiscard}>
+        Discard
       </Button>,
     );
   }

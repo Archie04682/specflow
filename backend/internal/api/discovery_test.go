@@ -88,7 +88,7 @@ func TestWorkflowCatalogErrors(t *testing.T) {
 		target string
 	}{
 		{name: "missing project", target: server.URL + "/api/workflows"},
-		{name: "non-git project", target: projectURL(server.URL, "/api/workflows", t.TempDir())},
+		{name: "missing project", target: projectURL(server.URL, "/api/workflows", filepath.Join(t.TempDir(), "missing"))},
 	}
 
 	for _, test := range tests {

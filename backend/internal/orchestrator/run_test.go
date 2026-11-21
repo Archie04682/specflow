@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -116,5 +117,43 @@ func TestAppendInjectionCapsHistory(t *testing.T) {
 	}
 	if len(run.Injections) != maxInjectionRecords {
 		t.Fatalf("injections = %d, want %d", len(run.Injections), maxInjectionRecords)
+	}
+}
+
+func TestNodeRunOutcomeRoundTripsAndIsOmittedWhenEmpty(t *testing.T) {
+	routed := NodeRun{NodeID: "gate", Kind: NodeKindCommand, Status: NodeCompleted, Outcome: "issues"}
+	data, err := json.Marshal(routed)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"outcome":"issues"`) {
+		t.Fatalf("record has no outcome: %s", data)
+	}
+
+	var decoded NodeRun
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.Outcome != "issues" {
+		t.Fatalf("outcome = %q", decoded.Outcome)
+	}
+
+	plain, err := json.Marshal(NodeRun{NodeID: "apply", Kind: NodeKindAgent, Status: NodeCompleted})
+	if err != nil {
+		t.Fatalf("marshal plain: %v", err)
+	}
+	if strings.Contains(string(plain), "outcome") {
+		t.Fatalf("a node with no route rendered an outcome: %s", plain)
+	}
+}
+
+func TestRunRecordWithoutAnOutcomeStillReads(t *testing.T) {
+	legacy := `{"nodeId":"apply","kind":"agent","status":"completed"}`
+	var decoded NodeRun
+	if err := json.Unmarshal([]byte(legacy), &decoded); err != nil {
+		t.Fatalf("unmarshal legacy record: %v", err)
+	}
+	if decoded.Outcome != "" || decoded.Status != NodeCompleted {
+		t.Fatalf("legacy record = %+v", decoded)
 	}
 }

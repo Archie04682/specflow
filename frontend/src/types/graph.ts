@@ -15,6 +15,8 @@ export interface GraphNode {
 export interface GraphEdge {
   from: string;
   to: string;
+  /** The source node's route label that takes this edge. */
+  when?: string;
 }
 
 export interface RunGraph {

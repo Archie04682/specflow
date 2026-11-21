@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+
+	"example.com/specflow/backend/internal/workspace"
 )
 
 // Retry modes for a failed node.
@@ -66,7 +68,7 @@ func (e *Engine) Retry(ctx context.Context, projectRoot, runID, nodeID, mode str
 	}
 
 	e.resetFrom(live, order, index)
-	return e.launch(live, index)
+	return e.launch(live)
 }
 
 // Resume continues a failed or cancelled run at its first unfinished node.
@@ -106,7 +108,7 @@ func (e *Engine) Resume(ctx context.Context, projectRoot, runID string) error {
 	}
 
 	e.resetFrom(live, order, index)
-	return e.launch(live, index)
+	return e.launch(live)
 }
 
 func (e *Engine) resetFrom(live *liveRun, order []string, index int) {
@@ -135,6 +137,11 @@ func (e *Engine) checkpointBefore(live *liveRun, order []string, index int) stri
 		if checkpoint, ok := live.run.Checkpoints[order[position]]; ok {
 			return checkpoint
 		}
+	}
+	// A folder run has no base commit: its base is the snapshot of the copy as
+	// it was created.
+	if live.worktree.Mode == workspace.ModeFolder {
+		return workspace.BaseSnapshotID
 	}
 	return live.run.BaseCommit
 }

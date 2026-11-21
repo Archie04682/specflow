@@ -16,6 +16,8 @@ function makeActions(): RunActions {
     cancel: vi.fn(accepted),
     retry: vi.fn(accepted),
     resume: vi.fn(accepted),
+    apply: vi.fn(accepted),
+    discard: vi.fn(accepted),
   };
 }
 

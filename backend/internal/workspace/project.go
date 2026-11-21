@@ -1,9 +1,10 @@
-// Package workspace manages the git-isolated workspace a run executes in and
-// the per-project .specflow metadata directory.
+// Package workspace manages the isolated workspace a run executes in and the
+// per-project .specflow metadata directory.
 //
-// A project is the user's repository. A run never executes in it directly:
-// every run gets a worktree on its own branch so the user's checkout is left
-// untouched, and the project itself only ever gains the .specflow directory.
+// A project is the user's directory. A run never executes in it directly: a git
+// project gets a worktree on its own branch, and a folder project gets a copy,
+// so the user's files are left untouched until the run is applied. The project
+// itself only ever gains the .specflow directory.
 package workspace
 
 import (
@@ -26,6 +27,12 @@ const (
 	gitignoreName    = ".gitignore"
 )
 
+// Workspace modes. A project chooses one; an unset mode is git.
+const (
+	ModeGit    = "git"
+	ModeFolder = "folder"
+)
+
 // ErrNotGitRepository reports a project directory that git does not track.
 var ErrNotGitRepository = errors.New("project is not a git repository")
 
@@ -33,12 +40,14 @@ var ErrNotGitRepository = errors.New("project is not a git repository")
 // no source branch a run could merge back into.
 var ErrDetachedHEAD = errors.New("project has a detached HEAD")
 
-// Project is a user's git repository.
+// Project is a user's directory that runs execute from.
 type Project struct {
 	Root string
 }
 
-// Open resolves a project root and verifies that it is a git repository.
+// Open resolves a project root. The directory need not be a git repository:
+// the workspace mode decides how runs are isolated, and the file reads that
+// flows, skills, and history need work without one.
 func Open(ctx context.Context, root string) (*Project, error) {
 	absolute, err := filepath.Abs(root)
 	if err != nil {
@@ -59,12 +68,7 @@ func Open(ctx context.Context, root string) (*Project, error) {
 		return nil, fmt.Errorf("project root %s is not a directory", absolute)
 	}
 
-	project := &Project{Root: absolute}
-	if _, err := project.Git(ctx, "rev-parse", "--show-toplevel"); err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrNotGitRepository, absolute)
-	}
-
-	return project, nil
+	return &Project{Root: absolute}, nil
 }
 
 // Git runs a git command in the project root and returns trimmed stdout.
@@ -179,14 +183,18 @@ var defaultConfig = []byte(`# SpecFlow project configuration.
 # below are used.
 skills: []
 #  - .specflow/skills
+#  - .agents/skills
 #  - .dsh/skills
 #  - .pi/skills
 #  - ~/.dsh/skills
+#  - ~/.agents/skills
 `)
 
 // Config is the subset of project configuration this change reads.
 type Config struct {
 	Skills []string `yaml:"skills"`
+	// VCS is the workspace mode: "git" (the default when unset) or "folder".
+	VCS string `yaml:"vcs,omitempty"`
 }
 
 // LoadConfig reads .specflow/config.yaml. A missing file is an empty config.
@@ -207,10 +215,206 @@ func (p *Project) LoadConfig() (Config, error) {
 	return config, nil
 }
 
-// defaultSkillRoots is ordered by precedence. The project's shared folder wins
-// so one copy of a skill can serve every harness; the harness-specific folders
-// stay supported for projects that already keep skills there.
-var defaultSkillRoots = []string{".specflow/skills", ".dsh/skills", ".pi/skills", "~/.dsh/skills"}
+// SetMode records the workspace mode in .specflow/config.yaml, editing the
+// document rather than re-encoding the struct so comments and unknown keys
+// survive. A project may change its mode only before its first run: an existing
+// run's copy, snapshots, and apply outcome assume the mode it was created with.
+// Re-recording the mode it already has is not a change, so it also works after a
+// run: it only makes the choice explicit.
+func (p *Project) SetMode(mode string) error {
+	switch mode {
+	case ModeGit, ModeFolder:
+	default:
+		return fmt.Errorf("unknown workspace mode %q: use %q or %q", mode, ModeGit, ModeFolder)
+	}
+
+	current, err := p.Mode()
+	if err != nil {
+		return err
+	}
+	if current != mode {
+		runs, err := p.HasRuns()
+		if err != nil {
+			return err
+		}
+		if runs {
+			return errors.New("the workspace mode cannot change after a run exists")
+		}
+	}
+
+	path := filepath.Join(p.SpecflowDir(), configFileName)
+	var document yaml.Node
+	data, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
+		return fmt.Errorf("read %s: %w", path, err)
+	default:
+		if err := yaml.Unmarshal(data, &document); err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+	}
+
+	if err := setConfigValue(&document, "vcs", mode); err != nil {
+		return fmt.Errorf("edit %s: %w", path, err)
+	}
+	encoded, err := yaml.Marshal(&document)
+	if err != nil {
+		return fmt.Errorf("encode config: %w", err)
+	}
+	if err := writeFileAtomic(path, encoded); err != nil {
+		return err
+	}
+	return nil
+}
+
+// setConfigValue sets one key in a YAML document, creating the mapping when the
+// document is empty.
+func setConfigValue(document *yaml.Node, key, value string) error {
+	if document.Kind == 0 {
+		document.Kind = yaml.DocumentNode
+	}
+	if len(document.Content) == 0 {
+		document.Content = []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}
+	}
+	root := document.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return errors.New("config file is not a mapping")
+	}
+	for index := 0; index+1 < len(root.Content); index += 2 {
+		if root.Content[index].Value == key {
+			root.Content[index+1] = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
+			return nil
+		}
+	}
+	root.Content = append(root.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
+	return nil
+}
+
+// writeFileAtomic replaces a file with new content through a temporary file in
+// the same directory, so a crash cannot leave a partial write.
+func writeFileAtomic(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(path), err)
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
+	if err != nil {
+		return fmt.Errorf("create %s: %w", path, err)
+	}
+	name := temporary.Name()
+	if _, err := temporary.Write(data); err != nil {
+		temporary.Close()
+		_ = os.Remove(name)
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := os.Rename(name, path); err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("replace %s: %w", path, err)
+	}
+	return nil
+}
+
+// Mode reports the project's workspace mode. An unset mode is git, so an
+// existing project keeps its worktree without a migration.
+func (p *Project) Mode() (string, error) {
+	config, err := p.LoadConfig()
+	if err != nil {
+		return "", err
+	}
+	if config.VCS == "" {
+		return ModeGit, nil
+	}
+	return config.VCS, nil
+}
+
+// ModeIsExplicit reports whether the project recorded a mode, rather than
+// running on the git default.
+func (p *Project) ModeIsExplicit() (bool, error) {
+	config, err := p.LoadConfig()
+	if err != nil {
+		return false, err
+	}
+	return config.VCS != "", nil
+}
+
+// HasRuns reports whether the project has any run metadata.
+func (p *Project) HasRuns() (bool, error) {
+	entries, err := os.ReadDir(filepath.Join(p.SpecflowDir(), runsDirName))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read runs: %w", err)
+	}
+	return len(entries) > 0, nil
+}
+
+// GitStatus is a project's git state. It is reported, not required: a folder
+// project is not a repository and is still a valid project.
+type GitStatus struct {
+	Repository bool   `json:"repository"`
+	Branch     string `json:"branch,omitempty"`
+	HasCommit  bool   `json:"hasCommit"`
+	Reason     string `json:"reason,omitempty"`
+	// VCS is the project's workspace mode, so a reader knows whether a missing
+	// repository is a gap.
+	VCS string `json:"vcs,omitempty"`
+}
+
+// GitStatus reports the project's git state without failing for a directory
+// that is not a repository.
+func (p *Project) GitStatus(ctx context.Context) (GitStatus, error) {
+	mode, err := p.Mode()
+	if err != nil {
+		return GitStatus{}, err
+	}
+
+	status := GitStatus{VCS: mode}
+	if _, err := p.Git(ctx, "rev-parse", "--is-inside-work-tree"); err != nil {
+		status.Reason = "not a git repository"
+		return status, nil
+	}
+
+	status.Repository = true
+	if branch, err := p.CurrentBranch(ctx); err == nil {
+		status.Branch = branch
+	} else {
+		status.Reason = err.Error()
+	}
+	// An initialised repository with no commit cannot back a worktree, so this
+	// is its own fact rather than a branch failure.
+	if _, err := p.Head(ctx); err == nil {
+		status.HasCommit = true
+	}
+	return status, nil
+}
+
+// RequireGit reports a directory that is not a repository, naming the project.
+func (p *Project) RequireGit(ctx context.Context) error {
+	if _, err := p.Git(ctx, "rev-parse", "--is-inside-work-tree"); err != nil {
+		return fmt.Errorf("%w: %s", ErrNotGitRepository, p.Root)
+	}
+	return nil
+}
+
+// defaultSkillRoots is ordered by precedence: shared project, then
+// harness-specific project, then global. `.agents/skills` is where the skills
+// CLI installs for most harnesses, so it sits with the project's own shared
+// folder rather than with a harness-specific one.
+var defaultSkillRoots = []string{
+	".specflow/skills",
+	".agents/skills",
+	".dsh/skills",
+	".pi/skills",
+	"~/.dsh/skills",
+	"~/.agents/skills",
+}
 
 // SkillSource is one configured root: the label shown to a person and the
 // resolved absolute directory.

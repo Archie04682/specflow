@@ -47,6 +47,7 @@ export function RunView({ project, runId, onNewRun }: RunViewProps) {
   const setEntryError = useRunStore((state) => state.setEntryError);
   const setNotice = useRunStore((state) => state.setNotice);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
 
   const { refresh, reconnect } = useRunData(project, runId);
   const actions = useRunActions({ project, runId, refresh, reconnect });
@@ -93,6 +94,20 @@ export function RunView({ project, runId, onNewRun }: RunViewProps) {
     setCancelOpen(false);
   };
 
+  // A folder run's changes live in its copy until the operator applies them.
+  // A failed or cancelled folder run holds that copy too: discarding is the
+  // only way to release the project, so it must stay reachable.
+  const folder = run.vcs === "folder";
+  const awaitingApply =
+    folder && run.status === "completed" && run.apply === "pending";
+  const discardable =
+    awaitingApply ||
+    (folder && (run.status === "failed" || run.status === "cancelled"));
+  const confirmDiscard = async () => {
+    await actions.discard();
+    setDiscardOpen(false);
+  };
+
   const failedNode = run.nodes.find((node) => node.status === "failed");
   const workflowName = graph?.name ?? run.workflowId ?? "workflow";
 
@@ -126,6 +141,10 @@ export function RunView({ project, runId, onNewRun }: RunViewProps) {
                   : undefined
               }
               pendingAction={pendingAction}
+              awaitingApply={awaitingApply}
+              discardable={discardable}
+              onApply={() => void actions.apply()}
+              onRequestDiscard={() => setDiscardOpen(true)}
               onRequestCancel={() => setCancelOpen(true)}
               onResume={() => void actions.resume()}
               onRetry={(nodeId) => void actions.retry(nodeId, "forward")}
@@ -138,6 +157,12 @@ export function RunView({ project, runId, onNewRun }: RunViewProps) {
       />
 
       <div className="run-banners">
+        {awaitingApply ? (
+          <Banner tone="info">
+            This run worked on a copy of the folder. Its changes are not in the
+            project yet: apply them, or discard the run.
+          </Banner>
+        ) : null}
         {entryError ? (
           <Banner tone="error" onDismiss={() => setEntryError(null)}>
             {entryError}
@@ -180,6 +205,19 @@ export function RunView({ project, runId, onNewRun }: RunViewProps) {
       />
 
       <RunFooter run={run} streamStatus={streamStatus} />
+
+      <ConfirmDialog
+        open={discardOpen}
+        title="Discard this run's changes?"
+        confirmLabel="Discard changes"
+        cancelLabel="Keep them"
+        danger
+        busy={pendingAction === "discard"}
+        onConfirm={() => void confirmDiscard()}
+        onCancel={() => setDiscardOpen(false)}
+      >
+        The run's copy is removed and the project's files stay as they are.
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={cancelOpen}

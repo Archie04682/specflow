@@ -4,6 +4,7 @@ import {
   addEdge,
   addNode,
   canAddEdge,
+  canvasEdges,
   draftSignature,
   edgeKey,
   emptyDraft,
@@ -15,7 +16,12 @@ import {
   referenceFromName,
   removeEdge,
   removeNode,
+  routeEntries,
+  routeLabels,
+  declaresRouteLabel,
   triStateValue,
+  withRoute,
+  withoutRoute,
   updateNode,
   updateWorkflowFields,
 } from "./model";
@@ -169,5 +175,128 @@ describe("edgeKey and replaceEdge", () => {
     expect(replaceEdge(base, { from: "a", to: "b" }, { from: "c", to: "c" })).toBeNull();
     expect(replaceEdge(base, { from: "a", to: "b" }, { from: "a", to: "missing" })).toBeNull();
     expect(replaceEdge(base, { from: "a", to: "b" }, { from: "a", to: "c" })).toBeNull();
+  });
+});
+
+describe("routing", () => {
+  const routed: WorkflowDraft = {
+    id: "demo",
+    version: 1,
+    defaults: { harness: "pi" },
+    nodes: [
+      {
+        id: "gate",
+        kind: "command",
+        command: "test ! -s review.md",
+        routes: { "1": "issues", "0": "clean" },
+      },
+      { id: "fix", kind: "agent" },
+      { id: "verify", kind: "command", command: "true" },
+    ],
+    edges: [
+      { from: "gate", to: "fix", when: "issues" },
+      { from: "gate", to: "verify", when: "clean" },
+    ],
+  };
+
+  it("lists routes in exit-code order", () => {
+    expect(routeEntries(routed.nodes[0])).toEqual([
+      { code: 0, label: "clean" },
+      { code: 1, label: "issues" },
+    ]);
+  });
+
+  it("offers the source's distinct labels, sorted", () => {
+    expect(routeLabels(routed, "gate")).toEqual(["clean", "issues"]);
+    expect(routeLabels(routed, "fix")).toEqual([]);
+    expect(declaresRouteLabel(routed, "gate", "issues")).toBe(true);
+    expect(declaresRouteLabel(routed, "fix", "issues")).toBe(false);
+  });
+
+  it("adds and removes a route", () => {
+    expect(withRoute(routed.nodes[0], 2, "escalate")).toEqual({
+      "0": "clean",
+      "1": "issues",
+      "2": "escalate",
+    });
+    expect(withoutRoute(routed.nodes[0], 0)).toEqual({ "1": "issues" });
+
+    // Removing the last route drops the field rather than leaving an empty map.
+    expect(withoutRoute({ id: "gate", kind: "command", routes: { "1": "issues" } }, 1)).toBeUndefined();
+  });
+
+  it("drops routes when a node stops being a command node", () => {
+    const next = updateNode(routed, "gate", { kind: "agent" });
+    expect(next.nodes[0].routes).toBeUndefined();
+
+    const stillCommand = updateNode(routed, "gate", { title: "Gate" });
+    expect(stillCommand.nodes[0].routes).toEqual({
+      "0": "clean",
+      "1": "issues",
+    });
+  });
+
+  it("clears a condition when the edge is rewired to a source without it", () => {
+    const rewired = replaceEdge(
+      routed,
+      { from: "gate", to: "fix", when: "issues" },
+      { from: "fix", to: "verify", when: "issues" },
+    );
+    expect(rewired?.edges).toEqual([
+      { from: "fix", to: "verify" },
+      { from: "gate", to: "verify", when: "clean" },
+    ]);
+  });
+
+  it("keeps a condition when the rewired source declares it", () => {
+    const twoGates: WorkflowDraft = {
+      ...routed,
+      nodes: [
+        ...routed.nodes,
+        {
+          id: "other_gate",
+          kind: "command",
+          command: "true",
+          routes: { "0": "issues" },
+        },
+      ],
+      edges: [
+        { from: "gate", to: "fix", when: "issues" },
+        { from: "other_gate", to: "verify", when: "issues" },
+      ],
+    };
+    const rewired = replaceEdge(
+      twoGates,
+      { from: "gate", to: "fix", when: "issues" },
+      { from: "other_gate", to: "fix", when: "issues" },
+    );
+    expect(rewired?.edges[0]).toEqual({
+      from: "other_gate",
+      to: "fix",
+      when: "issues",
+    });
+  });
+});
+
+describe("canvasEdges", () => {
+  it("carries an edge condition as its canvas label", () => {
+    const draft: WorkflowDraft = {
+      id: "demo",
+      defaults: {},
+      nodes: [
+        { id: "gate", kind: "command", routes: { "0": "clean", "1": "issues" } },
+        { id: "fix", kind: "agent" },
+        { id: "verify", kind: "agent" },
+      ],
+      edges: [
+        { from: "gate", to: "fix", when: "issues" },
+        { from: "fix", to: "verify" },
+      ],
+    };
+
+    expect(canvasEdges(draft)).toEqual([
+      { id: "gate->fix", from: "gate", to: "fix", label: "issues" },
+      { id: "fix->verify", from: "fix", to: "verify" },
+    ]);
   });
 });

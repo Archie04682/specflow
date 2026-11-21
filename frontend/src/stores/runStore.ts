@@ -24,7 +24,9 @@ export type ActionName =
   | "approve"
   | "cancel"
   | "retry"
-  | "resume";
+  | "resume"
+  | "apply"
+  | "discard";
 
 interface RunStore {
   project: string | null;

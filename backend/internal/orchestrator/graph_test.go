@@ -278,3 +278,37 @@ func TestReadRunGraphOfAPendingRunWritesNothing(t *testing.T) {
 		t.Fatalf("reading a pending run's graph produced events: %v", err)
 	}
 }
+
+const routingGraphWorkflow = `
+id: routed
+name: Routed
+defaults: {harness: fake}
+nodes:
+  - {id: gate, kind: command, command: "test ! -s findings.md", routes: {0: clean, 1: issues}}
+  - {id: fix, kind: agent, prompt: fix it}
+  - {id: verify, kind: command, command: "true"}
+edges:
+  - {from: gate, to: fix, when: issues}
+  - {from: gate, to: verify, when: clean}
+`
+
+func TestReadRunGraphCarriesEdgeConditions(t *testing.T) {
+	project := newRepoProject(t)
+	writeProjectWorkflow(t, project, routingGraphWorkflow)
+
+	engine := newTestEngine(t)
+	run := createGraphRun(t, engine, project)
+
+	graph, err := ReadRunGraph(context.Background(), project, run.ID)
+	if err != nil {
+		t.Fatalf("read graph: %v", err)
+	}
+
+	want := []GraphEdge{
+		{From: "gate", To: "fix", When: "issues"},
+		{From: "gate", To: "verify", When: "clean"},
+	}
+	if !reflect.DeepEqual(graph.Edges, want) {
+		t.Fatalf("edges = %+v, want %+v", graph.Edges, want)
+	}
+}

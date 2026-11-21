@@ -5,6 +5,7 @@ import { useRunStore } from "../../stores/runStore";
 import { fakeResponse, stubFetch } from "../../test/http";
 import { makeHarness, makeRun } from "../../test/fixtures";
 import type { WorkflowSummary } from "../../types/graph";
+import type { ProjectReadiness } from "../../types/onboarding";
 import { ChatHome } from "./ChatHome";
 
 function catalog(): WorkflowSummary[] {
@@ -61,6 +62,31 @@ function renderHome(overrides: Partial<Parameters<typeof ChatHome>[0]> = {}) {
     />,
   );
   return handlers;
+}
+
+function readiness(overrides: Partial<ProjectReadiness> = {}): ProjectReadiness {
+  return {
+    project: "/repo",
+    vcs: "git",
+    vcsExplicit: false,
+    vcsChangeable: true,
+    git: { repository: true, branch: "main", hasCommit: true },
+    layout: true,
+    flows: [],
+    skills: { roots: [], found: [] },
+    tools: { openspecFound: true, harnesses: [{ id: "pi", ready: true }] },
+    uncommitted: [],
+    secrets: [],
+    offline: false,
+    actions: [
+      { name: "init_repository", available: false, reason: "the project is already a git repository" },
+      { name: "seed_flow", available: true },
+      { name: "install_skills_local", available: false, reason: "no skills source configured" },
+      { name: "install_skills_online", available: true },
+    ],
+    ready: false,
+    ...overrides,
+  };
 }
 
 describe("ChatHome", () => {
@@ -181,6 +207,167 @@ describe("ChatHome", () => {
     await user.click(screen.getByRole("button", { name: "New flow" }));
     expect(onNewFlow).toHaveBeenCalledWith("/repo");
     expect(screen.getByText("Create a flow to start a run.")).toBeInTheDocument();
+  });
+
+  it("does not repeat the catalog error a non-repository project already explains", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/harnesses")) {
+        return fakeResponse(200, { harnesses: [makeHarness()] });
+      }
+      if (url.includes("/api/project/readiness")) {
+        return fakeResponse(
+          200,
+          readiness({
+            git: { repository: false, hasCommit: false, reason: "not a git repository" },
+            actions: [{ name: "init_repository", available: true }],
+          }),
+        );
+      }
+      return fakeResponse(404, { error: "unexpected" });
+    });
+
+    renderHome({
+      workflows: [],
+      workflowsLoading: false,
+      workflowsError: "project is not a git repository: /repo",
+    });
+
+    // The setup card is the one place this state is stated.
+    expect(await screen.findByText("Not a git repository")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Could not load this project's flows/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+  });
+
+  it("replaces the composer while the project cannot start a run", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/harnesses")) {
+        return fakeResponse(200, { harnesses: [makeHarness()] });
+      }
+      if (url.includes("/api/project/readiness")) {
+        return fakeResponse(
+          200,
+          readiness({ git: { repository: true, branch: "main", hasCommit: false } }),
+        );
+      }
+      return fakeResponse(404, { error: "unexpected" });
+    });
+
+    renderHome({ workflows: [], workflowsLoading: false });
+
+    expect(
+      await screen.findByText("Complete the setup above, then start a run here."),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Objective")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Start run" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("No commits yet")).toBeInTheDocument();
+  });
+
+  it("keeps the composer for a repository that only lacks a flow", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/harnesses")) {
+        return fakeResponse(200, { harnesses: [makeHarness()] });
+      }
+      if (url.includes("/api/project/readiness")) {
+        return fakeResponse(200, readiness());
+      }
+      return fakeResponse(404, { error: "unexpected" });
+    });
+
+    renderHome({ workflows: [], workflowsLoading: false });
+
+    expect(await screen.findByText("No flow yet")).toBeInTheDocument();
+    expect(screen.getByLabelText("Objective")).toBeInTheDocument();
+  });
+
+  it("keeps the composer for a folder project without a repository", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/harnesses")) {
+        return fakeResponse(200, { harnesses: [makeHarness()] });
+      }
+      if (url.includes("/api/project/readiness")) {
+        return fakeResponse(
+          200,
+          readiness({
+            vcs: "folder",
+            git: { repository: false, hasCommit: false, reason: "not a git repository" },
+          }),
+        );
+      }
+      return fakeResponse(404, { error: "unexpected" });
+    });
+
+    renderHome({ workflows: [], workflowsLoading: false });
+
+    expect(await screen.findByText("No flow yet")).toBeInTheDocument();
+    expect(screen.getByLabelText("Objective")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Complete the setup above, then start a run here."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not repeat a harness warning the setup card lists", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/harnesses")) {
+        return fakeResponse(200, {
+          harnesses: [makeHarness({ ready: false, readyError: "no credentials" })],
+        });
+      }
+      if (url.includes("/api/project/readiness")) {
+        return fakeResponse(
+          200,
+          readiness({
+            tools: {
+              openspecFound: true,
+              harnesses: [{ id: "pi", ready: false, reason: "no credentials" }],
+            },
+          }),
+        );
+      }
+      return fakeResponse(404, { error: "unexpected" });
+    });
+
+    renderHome({ workflows: [], workflowsLoading: false });
+
+    expect(await screen.findByText(/Harness pi is not ready/)).toBeInTheDocument();
+    expect(screen.queryByText(/Harness not ready/i)).not.toBeInTheDocument();
+  });
+
+  it("advances the setup after the workspace mode is recorded", async () => {
+    const user = userEvent.setup();
+    let recorded = false;
+    stubFetch((url, init) => {
+      if (url.includes("/api/harnesses")) {
+        return fakeResponse(200, { harnesses: [makeHarness()] });
+      }
+      if (url === "/api/project/setup" && init?.method === "POST") {
+        recorded = true;
+        return fakeResponse(200, { vcs: "git", repository: true, hasCommit: false });
+      }
+      if (url.includes("/api/project/readiness")) {
+        return fakeResponse(
+          200,
+          readiness(
+            recorded
+              ? { vcsExplicit: true, git: { repository: true, branch: "main", hasCommit: false } }
+              : {
+                  vcsExplicit: false,
+                  git: { repository: false, hasCommit: false, reason: "not a git repository" },
+                },
+          ),
+        );
+      }
+      return fakeResponse(404, { error: "unexpected" });
+    });
+
+    renderHome({ workflows: [], workflowsLoading: false });
+    await user.click(await screen.findByRole("button", { name: "Use git" }));
+
+    expect(await screen.findByText("No commits yet")).toBeInTheDocument();
+    expect(screen.getByText("Step 1 of 4")).toBeInTheDocument();
   });
 
   it("asks for a project before composing a run", () => {

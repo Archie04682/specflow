@@ -21,6 +21,7 @@ export function EditorEdge({
   target,
   selected,
   markerEnd,
+  label,
 }: EdgeProps) {
   const sourceNode = useInternalNode(source);
   const targetNode = useInternalNode(target);
@@ -52,22 +53,37 @@ export function EditorEdge({
   ];
   if (!numbers.every(Number.isFinite)) return null;
 
-  const [path] = getSmoothStepPath({
+  const [path, labelX, labelY] = getSmoothStepPath({
     ...anchors,
     borderRadius: 18,
     offset: 22,
   });
 
   return (
-    <BaseEdge
-      id={id}
-      path={path}
-      markerEnd={markerEnd}
-      interactionWidth={24}
-      style={
-        selected ? { stroke: "var(--accent)", strokeWidth: 2 } : undefined
-      }
-      className={selected ? "editor-edge editor-edge--selected" : "editor-edge"}
-    />
+    <>
+      <BaseEdge
+        id={id}
+        path={path}
+        markerEnd={markerEnd}
+        interactionWidth={24}
+        style={
+          selected ? { stroke: "var(--accent)", strokeWidth: 2 } : undefined
+        }
+        className={
+          selected ? "editor-edge editor-edge--selected" : "editor-edge"
+        }
+      />
+      {label ? (
+        <text
+          className="editor-edge__label"
+          x={labelX}
+          y={labelY}
+          textAnchor="middle"
+          dominantBaseline="middle"
+        >
+          {label}
+        </text>
+      ) : null}
+    </>
   );
 }

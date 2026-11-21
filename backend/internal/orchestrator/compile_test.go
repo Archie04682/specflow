@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -259,7 +260,7 @@ func TestCompileWorkflowCanonicalTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if len(plan.Nodes) != 8 {
+	if len(plan.Nodes) != 10 {
 		t.Fatalf("nodes = %d", len(plan.Nodes))
 	}
 
@@ -279,6 +280,21 @@ func TestCompileWorkflowCanonicalTemplate(t *testing.T) {
 	merge := plan.Node("merge")
 	if merge == nil || merge.Workdir != WorkdirProject || !merge.RequireApproval {
 		t.Fatalf("merge = %+v", merge)
+	}
+
+	gate := plan.Node("review_gate")
+	if gate == nil || gate.Routes[0] != "clean" || gate.Routes[1] != "issues" {
+		t.Fatalf("review_gate = %+v", gate)
+	}
+	conditional := 0
+	for _, edge := range plan.Edges {
+		if edge.From != "review_gate" {
+			continue
+		}
+		conditional++
+	}
+	if conditional != 2 {
+		t.Fatalf("review_gate edges = %d, want 2", conditional)
 	}
 }
 
@@ -452,5 +468,47 @@ func TestValidateWorkflowRejectsBothSkillForms(t *testing.T) {
 	err := ValidateWorkflow(workflow)
 	if err == nil || !strings.Contains(err.Error(), "both skill and skills") {
 		t.Fatalf("error = %v, want a both-forms problem", err)
+	}
+}
+
+func TestCompileWorkflowCarriesEdgesAndRoutes(t *testing.T) {
+	source := `
+id: routed
+defaults: {harness: fake}
+nodes:
+  - {id: gate, kind: command, command: "test -s findings.md", routes: {1: issues, 0: clean}}
+  - {id: fix, kind: agent, prompt: fix it}
+  - {id: verify, kind: command, command: "true"}
+edges:
+  - {from: gate, to: fix, when: issues}
+  - {from: gate, to: verify, when: clean}
+`
+	plan, err := CompileWorkflow([]byte(source), "routed.yaml", NormalizeContext{})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	want := []PlanEdge{
+		{From: "gate", To: "fix", When: "issues"},
+		{From: "gate", To: "verify", When: "clean"},
+	}
+	if !reflect.DeepEqual(plan.Edges, want) {
+		t.Fatalf("plan edges = %+v, want %+v", plan.Edges, want)
+	}
+
+	gate := plan.Node("gate")
+	if gate == nil {
+		t.Fatal("plan lost the gate")
+	}
+	if gate.Routes[0] != "clean" || gate.Routes[1] != "issues" {
+		t.Fatalf("gate routes = %+v", gate.Routes)
+	}
+
+	outgoing := plan.Outgoing("gate")
+	if len(outgoing) != 2 || outgoing[0].To != "fix" || outgoing[1].To != "verify" {
+		t.Fatalf("outgoing = %+v", outgoing)
+	}
+	if fixOut := plan.Outgoing("fix"); len(fixOut) != 0 {
+		t.Fatalf("fix has outgoing edges: %+v", fixOut)
 	}
 }

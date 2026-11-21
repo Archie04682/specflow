@@ -45,11 +45,15 @@ export interface WorkflowNodeDraft {
   retry?: number;
   tools?: string[];
   postcondition?: PostconditionDraft;
+  /** Exit code to route label. Only a command node may declare routes. */
+  routes?: Record<string, string>;
 }
 
 export interface WorkflowEdgeDraft {
   from: string;
   to: string;
+  /** The source node's route label that takes this edge. */
+  when?: string;
 }
 
 export interface WorkflowDraft {

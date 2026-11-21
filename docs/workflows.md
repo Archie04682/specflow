@@ -14,6 +14,36 @@ A run's `workflow` field is resolved as:
 2. `<project>/.specflow/workflows/<name>.yaml`,
 3. `<project>/workflows/<name>.yaml`.
 
+## Seeding the default flow
+
+A project with no workflow can be given the default one without a SpecFlow
+checkout: the templates are compiled into the executable.
+`GET /api/templates` lists the references this build carries, and
+`POST /api/project/flow` writes one to `.specflow/workflows/<reference>.yaml`:
+
+```json
+{ "project": "/path/to/repo", "reference": "standard-feature" }
+```
+
+The reference defaults to `standard-feature`. Seeding never overwrites: an
+existing file — including one the operator edited — is reported as `409` with
+nothing changed. The written file is an ordinary project workflow, so the editor
+opens and saves it like any other.
+
+The template written depends on the project's workspace mode. A **git** project
+gets `workflows/standard-feature.yaml`; a **folder** project gets
+`workflows/standard-feature-folder.yaml`, the same graph without the merge node,
+because applying the run's copy is the final approval. A project that is not a
+repository can run in folder mode; a git project also needs at least one
+commit, because a run branches a worktree from `HEAD`. The onboarding card can
+initialise a repository, but it never commits: the first commit is yours to
+make.
+
+The flow binds skills by name, so a project is only runnable once they are
+installed. `GET /api/project/readiness?project=<path>` reports which of a flow's
+skills resolve and which do not, alongside the repository, tool, and harness
+state.
+
 ## Shape
 
 ```yaml
@@ -71,7 +101,8 @@ edges:
   - {from: verify, to: merge}
 ```
 
-The canonical template is `workflows/standard-feature.yaml`.
+The canonical template is `workflows/standard-feature.yaml`; folder projects are
+seeded from `workflows/standard-feature-folder.yaml`.
 
 ## Nodes
 
@@ -90,6 +121,7 @@ The canonical template is `workflows/standard-feature.yaml`.
 | `command` | `command` | Shell command to run |
 | `workdir` | `command` | `run` (worktree, default) or `project` (the checkout) |
 | `postcondition` | both | Repository check that defines success |
+| `routes` | `command` | Exit code to route label; a declared code routes instead of failing |
 | `timeout` | both | Execution deadline; defaults 10m (command), 30m (agent) |
 | `interactive` | `agent` | Whether the node may ask the operator questions |
 | `allow_inject` | `agent` | Whether the operator may inject mid-run guidance |
@@ -107,7 +139,83 @@ is the run's state: edges carry ordering, not data, and a node's result is what
 it wrote to disk.
 
 **Edges.** `from`/`to` pairs define ordering. Independent branches are
-representable but the engine runs one node at a time.
+representable but the engine runs one node at a time. An edge may declare
+`when`, naming a route label its source node declares.
+
+## Conditional routing
+
+A workflow can choose a path instead of running every node. The decision is a
+repository fact measured by a `command` node, never a model's report of what it
+did:
+
+```yaml
+- id: review_gate
+  title: Review gate
+  kind: command
+  # Exit 0 means the file is absent or empty; exit 1 means it has findings.
+  command: test ! -s .specflow/review.md
+  routes:
+    0: clean
+    1: issues
+
+edges:
+  - {from: review, to: review_gate}
+  - {from: review_gate, to: fix, when: issues}
+  - {from: review_gate, to: tests, when: clean}
+  - {from: fix, to: tests}
+```
+
+**How the branch is chosen.** `routes` maps an exit code to a label. A declared
+code completes the node under that label and selects the one outgoing edge with
+the matching `when`. Any code the node does not declare still fails it: a
+timeout, a cancellation, or a shell error can never masquerade as a branch.
+Every declared label must be used by exactly one outgoing edge, and every
+outgoing edge of a routing node must name a declared label, so routing is a
+total function with no "no route" state.
+
+**How the run continues.** A node runs once every predecessor has resolved and
+at least one incoming edge was taken; a node that no taken edge reaches is
+reported `skipped` and takes none of its own edges. A join runs as soon as
+either branch arrives, so `tests` above runs after `fix` or after the clean
+edge, whichever the gate chose. Among nodes that are ready, the engine runs the
+one earliest in the compiled order, one node at a time. A workflow that declares
+no `routes` takes every edge and runs exactly as it did before routing existed.
+
+**Resuming.** The label a node completed under is recorded on the run. A resumed
+run re-derives the taken path from those labels alone: a node skipped because
+its branch was not taken stays skipped, and a node skipped because the run
+failed is re-run once a taken edge reaches it.
+
+### Where a gate keeps its evidence
+
+The engine knows `routes` and `when`; it knows nothing about reviews. The
+canonical template happens to use a findings file, and that convention is worth
+copying:
+
+```yaml
+- id: review
+  kind: agent
+  prompt: |
+    If you find something that must be fixed, write every finding to
+    .specflow/review.md, one per heading. If the changes are clean, do not
+    create that file.
+
+- id: fix
+  kind: agent
+  prompt: |
+    Read .specflow/review.md and fix every issue it lists. Delete that file
+    when you believe all of them are addressed.
+```
+
+Paths in a prompt and in a gate command resolve against the node's working
+directory, which is the run's worktree by default. The findings file therefore
+lives at `.specflow/worktrees/<run-id>/.specflow/review.md` — a **different**
+`.specflow/` from the project's run journals — and it is ignored by git at any
+depth because `.gitignore` names `.specflow/` without a leading slash.
+
+Because the file is the channel, no prompt variable carries the verdict and the
+edge carries no data. `fix` reads the findings from the working tree because
+that is where the work is.
 
 ## Postconditions
 
@@ -127,10 +235,16 @@ not retried automatically.
 
 A skill name resolves from, in order:
 
-1. `.specflow/skills`
-2. `.dsh/skills`
-3. `.pi/skills`
-4. `~/.dsh/skills`
+1. `.specflow/skills` — the project's own skills
+2. `.agents/skills` — what the [skills CLI](https://skills.sh) installs for most harnesses
+3. `.dsh/skills`
+4. `.pi/skills`
+5. `~/.dsh/skills`
+6. `~/.agents/skills` — what a global `skills` install writes
+
+The rule is shared project root, then harness-specific project root, then
+global. A skill in `.specflow/skills` therefore shadows an installed copy of the
+same name, and an installed copy shadows a harness-specific one.
 
 A `skills` list in `.specflow/config.yaml` replaces that order. The harness
 receives the resolved absolute path of every selected skill, so a skill lives in

@@ -43,6 +43,7 @@ user interaction.
 ## Repository layout
 
 ```text
+templates.go           //go:embed of workflows/*.yaml (package specflow)
 backend/cmd/api        server entrypoint
 backend/internal/api   HTTP router, handlers, SPA fallback
 backend/internal/config  port resolution
@@ -94,11 +95,14 @@ behavior changes.
    node receives a prompt rendered from a closed set (`objective`, `change`,
    `run_id`, `workdir`), a working directory, and a resolved skill; its result
    is what it wrote to disk. Do not add a context map or a template language.
-10. **Every run is isolated.** A run executes in `.specflow/worktrees/<id>` on
-    `specflow/run-<id>`, checkpoints after each node, and merges only through
-    an approval-gated command node that runs in the project checkout.
-    `.specflow/worktrees/` is never version-controlled; the rest of
-    `.specflow/` is committable if the user wants run history in git.
+10. **Every run is isolated.** A git project's run executes in
+    `.specflow/worktrees/<id>` on `specflow/run-<id>`, checkpoints after each
+    node, and merges only through an approval-gated command node that runs in
+    the project checkout. A folder project's run executes in a copy of the
+    folder, snapshots after each node, and is applied or discarded by the
+    operator; applying is not a commit. `.specflow/worktrees/` is never
+    version-controlled; the rest of `.specflow/` is committable if the user
+    wants run history in git.
 11. **A run is pinned to a compiled workflow.** Before a run is created, the
     workflow is parsed, validated, and normalized into a plan; the source that
     compiled is retained at `.specflow/runs/<id>/workflow.yaml`, and resume
@@ -106,17 +110,36 @@ behavior changes.
     run; a resumed run fails if the environment no longer satisfies the
     recorded definition.
 12. **Skills resolve from one shared root.** A skill name resolves from
-    `.specflow/skills` first, then `.dsh/skills`, `.pi/skills`, and
-    `~/.dsh/skills`; a `skills` list in `.specflow/config.yaml` replaces that
-    order. The harness receives the resolved absolute path of every selected skill (Pi
+    `.specflow/skills` first, then `.agents/skills`, `.dsh/skills`,
+    `.pi/skills`, `~/.dsh/skills`, and `~/.agents/skills`; a `skills` list in
+    `.specflow/config.yaml` replaces that order. The order is shared project
+    root, harness-specific project root, then global, so `.agents/skills` — where
+    the skills CLI installs — sits beside the project's own folder. The harness receives the resolved absolute path of every selected skill (Pi
     runs with `--no-skills --skill <path>` repeated), so never copy a skill into
     a harness-specific folder. The editor's multi-select skill catalog reads the
     same roots; a node stores `skills:` as a list, and older `skill:` files stay
     readable.
-13. **One project tree, one shell, many projects.** The workbench is a
+13. **Provisioning is explicit and one switch owns the network.** Registering
+    a project writes nothing; initialising a repository
+    (`POST /api/project/repository`), choosing the workspace mode
+    (`POST /api/project/setup`), seeding the default flow
+    (`POST /api/project/flow`), and installing skills
+    (`POST /api/project/skills`) are separate, explicit actions. The server may
+    run `git init` on `main` for a git-mode project but never commits: a run's
+    worktree needs a commit and the operator's files are theirs to stage. `--skills-source`/`SPECFLOW_SKILLS_SOURCE` makes a local source the
+    only skills provider, and `--offline`/`SPECFLOW_OFFLINE=1` forbids every
+    network command; both live in one predicate, because a guarantee scattered
+    across call sites is not a guarantee. Provisioning never commits, stages, or
+    changes an ignore rule: installed skills are reported as uncommitted paths.
+    Committing is a separate, explicit action (`POST /api/project/commit`) that
+    refuses paths that look like secrets and names them; ignoring one is another
+    (`POST /api/project/ignore`).
+14. **One project tree, one shell, many projects.** The workbench is a
     persistent left control panel plus a workspace. The panel is a project tree:
     each project node expands to **Chats** and **Flows** leaves, and there are
-    no Chat/Flows tabs and no flows index page. The registry is an ordered path
+    no Chat/Flows tabs and no flows index page. A git project that is not a
+    repository shows one initialise row in its node instead of the leaves; a
+    folder project always shows them. The registry is an ordered path
     list plus one active project in `localStorage` (`specflow.projects`,
     `specflow.project`); **Settings** in the panel foot switches, adds, and
     removes projects. Routes are `/`, `?run=<id>&project=<path>`, and
@@ -126,6 +149,14 @@ behavior changes.
     `frontend/src/components/Shell`, shell layout in `styles/shell.css`, and the
     harness-derived token set as the single visual language (flat near-black
     surfaces, hairlines, one blue accent, near-white primary actions).
+15. **A folder run is applied, not merged.** A project's `vcs` in
+    `.specflow/config.yaml` is `git` (the default) or `folder`; it may change
+    only before the project's first run. A folder run copies the project into
+    `.specflow/worktrees/<id>`, records a base manifest, and keeps one run at a
+    time per project until it is applied or discarded. Applying writes the added
+    and changed files back, deletes what the run deleted, and refuses when the
+    project no longer matches the base manifest; it never stages or commits.
+    Snapshots are directory copies under the run's metadata and die with it.
 
 ### Harness adapters
 
@@ -176,6 +207,16 @@ behavior changes.
 - Node success is a postcondition checked against the repository
   (`file_exists`, `new_change`, `tasks_complete`, `exit_zero`), not an exit
   code. A postcondition failure is distinct from a harness failure.
+- An edge may declare `when`, naming a route label its source `command` node
+  declares in `routes`. A declared exit code completes the node under that label
+  instead of failing it and selects the one matching edge; an undeclared code,
+  a timeout, and a cancellation still fail the node, so a crash never reads as a
+  branch. A node runs when every predecessor has resolved and at least one
+  incoming edge was taken; a node no taken edge reaches is `skipped`.
+  `plan.Order` is only the deterministic tie-break among ready nodes, so a
+  workflow that declares no `routes` runs exactly as before. The selected label
+  is recorded on the node, and a resume re-derives the taken path from those
+  labels alone.
 - Retry is forward (the failure is added to the prompt) or clean (the worktree
   returns to the node's checkpoint). A failed run resumes at the failed node;
   completed nodes are never re-executed.
@@ -208,7 +249,10 @@ behavior changes.
 - The engine runs one node at a time. Independent branches are representable
   but not concurrent yet.
 - The canonical template passes `{{objective}}` into explore, propose, and
-  apply, and `{{change}}` into apply, archive, and merge. Its verify gate
+  apply, and `{{change}}` into apply, review, archive, and merge. Its review
+  path is the worked example of routing: review leaves findings in
+  `.specflow/review.md`, a command gate routes on that file, and fix runs only
+  when the gate reports issues. Its verify gate
   validates the run's change: `openspec validate "{{change}}" --strict && make
   test`; `--changes` is the repository-wide gate. Bare `openspec validate`
   reports nothing to validate even when a change is active.

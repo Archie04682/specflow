@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"example.com/specflow/backend/internal/harness"
+	"example.com/specflow/backend/internal/onboarding"
 	"example.com/specflow/backend/internal/orchestrator"
 )
 
@@ -33,9 +34,16 @@ func NewRouterWithDeps(staticFS fs.FS, registry *harness.Registry, engine *orche
 // NewRouterWithServer returns the handler with the running server's identity
 // for GET /api/server, alongside the API and the embedded UI.
 func NewRouterWithServer(staticFS fs.FS, registry *harness.Registry, engine *orchestrator.Engine, server ServerIdentity) http.Handler {
+	return NewRouterWithOnboarding(staticFS, registry, engine, server, onboarding.Options{})
+}
+
+// NewRouterWithOnboarding returns the handler with the server's provisioning
+// settings. Readiness probes the same registry the runs use.
+func NewRouterWithOnboarding(staticFS fs.FS, registry *harness.Registry, engine *orchestrator.Engine, server ServerIdentity, options onboarding.Options) http.Handler {
 	if registry == nil {
 		registry = harness.NewRegistry()
 	}
+	options.Registry = registry
 
 	mux := http.NewServeMux()
 
@@ -43,6 +51,7 @@ func NewRouterWithServer(staticFS fs.FS, registry *harness.Registry, engine *orc
 	mux.Handle("GET /api/server", serverHandler(server))
 	mux.Handle("GET /api/harnesses", harnessesHandler(registry))
 	registerDiscoveryRoutes(mux)
+	registerOnboardingRoutes(mux, options)
 	if engine != nil {
 		registerRunRoutes(mux, engine)
 	}

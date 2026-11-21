@@ -65,3 +65,69 @@ describe("workflow editor api", () => {
     expect((error as ApiError).status).toBe(409);
   });
 });
+
+describe("workflow editor api routing", () => {
+  const routed: WorkflowDraft = {
+    id: "routed",
+    name: "Routed",
+    defaults: { harness: "pi" },
+    nodes: [
+      {
+        id: "gate",
+        kind: "command",
+        command: "test ! -s review.md",
+        routes: { "0": "clean", "1": "issues" },
+      },
+      { id: "fix", kind: "agent" },
+    ],
+    edges: [{ from: "gate", to: "fix", when: "issues" }],
+  };
+
+  it("sends routes and conditions and reads them back", async () => {
+    const fetchMock = stubFetch(() =>
+      fakeResponse(200, {
+        path: "/repo/.specflow/workflows/routed.yaml",
+        hash: "hash-2",
+      }),
+    );
+
+    await saveWorkflow("/repo", "routed", routed, "hash-1");
+    expect(callBody(fetchMock)).toEqual({ draft: routed, baseHash: "hash-1" });
+
+    const reopened = stubFetch(() =>
+      fakeResponse(200, {
+        reference: "routed",
+        path: "/repo/.specflow/workflows/routed.yaml",
+        source: "id: routed\n",
+        hash: "hash-2",
+        isTemplate: false,
+        draft: routed,
+      }),
+    );
+    const source = await getWorkflowSource("/repo", "routed");
+    expect(source.draft.nodes[0]!.routes).toEqual({
+      "0": "clean",
+      "1": "issues",
+    });
+    expect(source.draft.edges[0]!.when).toBe("issues");
+    expect(callUrl(reopened)).toBe("/api/workflows/routed?project=%2Frepo");
+  });
+
+  it("surfaces a routing refusal as an ApiError carrying its problems", async () => {
+    stubFetch(() =>
+      fakeResponse(400, {
+        error:
+          'workflow is invalid: edge "gate" -> "fix" declares when "major" which node "gate" does not route',
+      }),
+    );
+
+    const error = await saveWorkflow("/repo", "routed", routed, "hash-1").catch(
+      (cause: unknown) => cause,
+    );
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(400);
+    expect((error as ApiError).message).toContain(
+      'declares when "major" which node "gate" does not route',
+    );
+  });
+});

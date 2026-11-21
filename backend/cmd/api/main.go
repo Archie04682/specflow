@@ -21,6 +21,7 @@ import (
 	"example.com/specflow/backend/internal/config"
 	"example.com/specflow/backend/internal/harness"
 	"example.com/specflow/backend/internal/harness/pi"
+	"example.com/specflow/backend/internal/onboarding"
 	"example.com/specflow/backend/internal/orchestrator"
 	"example.com/specflow/backend/web"
 )
@@ -31,16 +32,23 @@ func main() {
 	startedAt := time.Now()
 
 	portFlag := flag.String("port", "", "TCP port to listen on (overrides PORT)")
+	skillsSourceFlag := flag.String("skills-source", "", "local skills source: a directory, .zip, or tar archive (overrides SPECFLOW_SKILLS_SOURCE)")
+	offlineFlag := flag.Bool("offline", false, "disable every network-capable provisioning action (overrides SPECFLOW_OFFLINE)")
 	flag.Parse()
 
-	portFlagSet := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "port" {
-			portFlagSet = true
-		}
-	})
+	passed := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { passed[f.Name] = true })
 
-	port, err := config.ResolvePort(*portFlag, portFlagSet, os.Getenv)
+	port, err := config.ResolvePort(*portFlag, passed["port"], os.Getenv)
+	if err != nil {
+		log.Fatalf("specflow: %v", err)
+	}
+
+	provisioning, err := config.ResolveProvisioning(
+		*skillsSourceFlag, passed["skills-source"],
+		*offlineFlag, passed["offline"],
+		os.Getenv,
+	)
 	if err != nil {
 		log.Fatalf("specflow: %v", err)
 	}
@@ -65,10 +73,13 @@ func main() {
 
 	server := &http.Server{
 		Addr: fmt.Sprintf(":%d", port),
-		Handler: api.NewRouterWithServer(staticFS, registry, engine, api.ServerIdentity{
+		Handler: api.NewRouterWithOnboarding(staticFS, registry, engine, api.ServerIdentity{
 			Info:         buildinfo.Read(),
 			StartedAt:    startedAt,
 			CheckoutRoot: checkoutRoot,
+		}, onboarding.Options{
+			SkillsSource: provisioning.SkillsSource,
+			Offline:      provisioning.Offline,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

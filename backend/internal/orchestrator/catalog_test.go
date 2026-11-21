@@ -277,11 +277,15 @@ nodes:
 	}
 }
 
-func TestReadWorkflowCatalogRejectsNonGitProject(t *testing.T) {
+func TestReadWorkflowCatalogReadsAFolderProject(t *testing.T) {
 	directory := t.TempDir()
 
-	if _, err := ReadWorkflowCatalog(context.Background(), directory); err == nil {
-		t.Fatal("a non-git project was accepted")
+	catalog, err := ReadWorkflowCatalog(context.Background(), directory)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(catalog) != 0 {
+		t.Fatalf("catalog = %+v, want empty", catalog)
 	}
 }
 

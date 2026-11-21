@@ -17,6 +17,19 @@ export interface InjectionResponse {
   status: string;
 }
 
+export interface ApplyReport {
+  written: string[];
+  deleted: string[];
+}
+
+export function applyRun(project: string, runId: string): Promise<ApplyReport> {
+  return request<ApplyReport>(`/api/runs/${runId}/apply`, { method: "POST", project });
+}
+
+export function discardRun(project: string, runId: string): Promise<void> {
+  return request<void>(`/api/runs/${runId}`, { method: "DELETE", project });
+}
+
 export function listRuns(project: string): Promise<Run[]> {
   return request<Run[]>("/api/runs", { project });
 }

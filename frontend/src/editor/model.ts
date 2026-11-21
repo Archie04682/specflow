@@ -74,9 +74,13 @@ export function updateNode(
 ): WorkflowDraft {
   return {
     ...draft,
-    nodes: draft.nodes.map((node) =>
-      node.id === nodeId ? { ...node, ...patch } : node,
-    ),
+    nodes: draft.nodes.map((node) => {
+      if (node.id !== nodeId) return node;
+      const next = { ...node, ...patch };
+      // Routes select on an exit code, so a kind without one cannot keep them.
+      if (next.kind !== "command") delete next.routes;
+      return next;
+    }),
   };
 }
 
@@ -117,8 +121,8 @@ export function edgeKey(edge: { from: string; to: string }): string {
 /** Rewires one edge. Returns null for a self-loop, unknown node, or duplicate. */
 export function replaceEdge(
   draft: WorkflowDraft,
-  current: { from: string; to: string },
-  next: { from: string; to: string },
+  current: { from: string; to: string; when?: string },
+  next: { from: string; to: string; when?: string },
 ): WorkflowDraft | null {
   if (!next.from || !next.to || next.from === next.to) return null;
   const known = new Set(draft.nodes.map((node) => node.id));
@@ -130,13 +134,20 @@ export function replaceEdge(
       edge.to === next.to,
   );
   if (duplicate) return null;
+  // A condition survives only while its new source declares it, so rewiring to
+  // a node without that route can never leave an invalid edge behind.
+  const when =
+    next.when && declaresRouteLabel(draft, next.from, next.when)
+      ? next.when
+      : undefined;
   return {
     ...draft,
-    edges: draft.edges.map((edge) =>
-      edge.from === current.from && edge.to === current.to
-        ? { from: next.from, to: next.to }
-        : edge,
-    ),
+    edges: draft.edges.map((edge) => {
+      if (!(edge.from === current.from && edge.to === current.to)) return edge;
+      return when
+        ? { from: next.from, to: next.to, when }
+        : { from: next.from, to: next.to };
+    }),
   };
 }
 
@@ -149,6 +160,55 @@ export function removeEdge(
     ...draft,
     edges: draft.edges.filter((edge) => !(edge.from === from && edge.to === to)),
   };
+}
+
+/** The routes of one node, ordered by exit code for stable rendering. */
+export function routeEntries(
+  node: WorkflowNodeDraft,
+): { code: number; label: string }[] {
+  const routes = node.routes ?? {};
+  return Object.keys(routes)
+    .map((key) => ({ code: Number(key), label: routes[key] ?? "" }))
+    .filter((entry) => Number.isFinite(entry.code))
+    .sort((left, right) => left.code - right.code);
+}
+
+/** Sets one exit code's label, returning the node's whole route map. */
+export function withRoute(
+  node: WorkflowNodeDraft,
+  code: number,
+  label: string,
+): Record<string, string> {
+  return { ...(node.routes ?? {}), [String(code)]: label };
+}
+
+/** Removes one exit code, dropping the map entirely when it empties. */
+export function withoutRoute(
+  node: WorkflowNodeDraft,
+  code: number,
+): Record<string, string> | undefined {
+  const routes = { ...(node.routes ?? {}) };
+  delete routes[String(code)];
+  return Object.keys(routes).length > 0 ? routes : undefined;
+}
+
+/** The distinct labels a node declares, sorted, for an edge's picker. */
+export function routeLabels(draft: WorkflowDraft, nodeId: string): string[] {
+  const node = draft.nodes.find((candidate) => candidate.id === nodeId);
+  if (!node?.routes) return [];
+  const labels = Object.values(node.routes)
+    .map((label) => label.trim())
+    .filter((label) => label.length > 0);
+  return Array.from(new Set(labels)).sort();
+}
+
+/** Reports whether a node declares a route label. */
+export function declaresRouteLabel(
+  draft: WorkflowDraft,
+  nodeId: string,
+  label: string,
+): boolean {
+  return routeLabels(draft, nodeId).includes(label);
 }
 
 export function updateWorkflowFields(
@@ -201,6 +261,27 @@ export function setNodeModel(
   return updateNode(draft, nodeId, {
     model: normalized,
   });
+}
+
+export interface CanvasEdge {
+  id: string;
+  from: string;
+  to: string;
+  /** The condition drawn on the edge, absent when the edge is always taken. */
+  label?: string;
+}
+
+/**
+ * Projects the draft's edges onto the canvas. The condition is carried as the
+ * edge's label, so a routed workflow reads without opening its edge forms.
+ */
+export function canvasEdges(draft: WorkflowDraft): CanvasEdge[] {
+  return draft.edges.map((edge) => ({
+    id: edgeKey(edge),
+    from: edge.from,
+    to: edge.to,
+    ...(edge.when ? { label: edge.when } : {}),
+  }));
 }
 
 export function nodeTitle(draft: WorkflowDraft, nodeId: string): string {

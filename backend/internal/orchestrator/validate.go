@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -42,6 +43,7 @@ func ValidateWorkflow(workflow *Workflow) error {
 	// The cycle walk needs a connected graph: reporting a dangling edge is
 	// more useful than a second error that only repeats it.
 	if validateEdges(workflow, seen, &problems) {
+		problems = append(problems, validateRouting(workflow)...)
 		if _, err := workflow.Order(); err != nil {
 			problems = append(problems, err.Error())
 		}
@@ -149,6 +151,98 @@ func validateEdges(workflow *Workflow, seen map[string]bool, problems *[]string)
 		}
 	}
 	return valid
+}
+
+// validateRouting checks the routing declaration: which nodes may route, which
+// labels they declare, and which edges select them. Routing is a total
+// function, so every declared label is used by exactly one outgoing edge and
+// every outgoing edge of a routing node names a declared label.
+func validateRouting(workflow *Workflow) []string {
+	var problems []string
+
+	// labels holds each routing node's declared labels; a node with no routes
+	// is absent, so "declares routes" and "its label set" stay distinguishable.
+	labels := make(map[string]map[string]bool, len(workflow.Nodes))
+	for index := range workflow.Nodes {
+		node := &workflow.Nodes[index]
+		if len(node.Routes) == 0 {
+			continue
+		}
+		if node.Kind != NodeKindCommand {
+			problems = append(problems, fmt.Sprintf("node %q declares routes but is not a command node", node.ID))
+		}
+		if node.Postcondition != nil {
+			problems = append(problems, fmt.Sprintf("node %q declares both routes and a postcondition", node.ID))
+		}
+
+		set := make(map[string]bool, len(node.Routes))
+		for _, code := range node.RouteCodes() {
+			label := strings.TrimSpace(node.Routes[code])
+			if label == "" {
+				problems = append(problems, fmt.Sprintf("node %q declares an empty route label for exit code %d", node.ID, code))
+				continue
+			}
+			set[label] = true
+		}
+		labels[node.ID] = set
+	}
+	if len(labels) == 0 {
+		return problems
+	}
+
+	used := make(map[string]int)
+	for _, edge := range workflow.Edges {
+		set, routing := labels[edge.From]
+		if !routing {
+			if edge.When != "" {
+				problems = append(problems, fmt.Sprintf(
+					"edge %q -> %q declares when %q but node %q declares no routes", edge.From, edge.To, edge.When, edge.From))
+			}
+			continue
+		}
+		if edge.When == "" {
+			problems = append(problems, fmt.Sprintf(
+				"edge %q -> %q declares no when, but node %q declares routes", edge.From, edge.To, edge.From))
+			continue
+		}
+		if !set[edge.When] {
+			problems = append(problems, fmt.Sprintf(
+				"edge %q -> %q declares when %q which node %q does not route", edge.From, edge.To, edge.When, edge.From))
+			continue
+		}
+		used[edge.From+"\x00"+edge.When]++
+		if used[edge.From+"\x00"+edge.When] == 2 {
+			problems = append(problems, fmt.Sprintf(
+				"node %q routes %q on more than one outgoing edge", edge.From, edge.When))
+		}
+	}
+
+	// Walk the declaration order, not the label map, so the same workflow
+	// always reports its unused labels in the same order.
+	for index := range workflow.Nodes {
+		node := &workflow.Nodes[index]
+		set, routing := labels[node.ID]
+		if !routing {
+			continue
+		}
+		for _, label := range sortedLabels(set) {
+			if used[node.ID+"\x00"+label] == 0 {
+				problems = append(problems, fmt.Sprintf(
+					"node %q declares route %q but no outgoing edge uses it", node.ID, label))
+			}
+		}
+	}
+	return problems
+}
+
+// sortedLabels returns a label set's members in ascending order.
+func sortedLabels(set map[string]bool) []string {
+	labels := make([]string, 0, len(set))
+	for label := range set {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+	return labels
 }
 
 func validatePostcondition(node *Node) []string {

@@ -170,8 +170,9 @@ func TestWorkflowSourceEndpointErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("non-git project", func(t *testing.T) {
-		response, body := request(t, http.MethodGet, projectURL(server.URL, "/api/workflows/test", t.TempDir()), nil)
+	t.Run("missing project", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "missing")
+		response, body := request(t, http.MethodGet, projectURL(server.URL, "/api/workflows/test", missing), nil)
 		if response.StatusCode != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400: %s", response.StatusCode, body)
 		}
@@ -479,7 +480,8 @@ func TestWorkflowSourceSaveErrors(t *testing.T) {
 	})
 
 	t.Run("unusable project", func(t *testing.T) {
-		response, body := saveWorkflowRequest(t, server.URL, t.TempDir(), "anything", apiSourceDraft(), "")
+		missing := filepath.Join(t.TempDir(), "missing")
+		response, body := saveWorkflowRequest(t, server.URL, missing, "anything", apiSourceDraft(), "")
 		if response.StatusCode != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400: %s", response.StatusCode, body)
 		}
@@ -552,5 +554,64 @@ func TestWorkflowSourceSaveDoesNotTouchAnExistingRun(t *testing.T) {
 	}
 	if reloaded.Status != orchestrator.RunCompleted {
 		t.Fatalf("run status = %s, want completed", reloaded.Status)
+	}
+}
+
+// Routing crosses the wire as a map with string keys, so the editor's save and
+// reopen are tested end to end rather than only through Go values.
+func TestWorkflowSourceSaveRoundTripsRouting(t *testing.T) {
+	server, project := newRunServer(t)
+	draft := orchestrator.WorkflowDraft{
+		ID:       "routed",
+		Name:     "Routed",
+		Version:  1,
+		Defaults: orchestrator.WorkflowDefaultsDraft{Harness: "mock"},
+		Nodes: []orchestrator.WorkflowNodeDraft{
+			{
+				ID:      "gate",
+				Title:   "Review gate",
+				Kind:    orchestrator.NodeKindCommand,
+				Command: "test ! -s review.md",
+				Routes:  map[int]string{0: "clean", 1: "issues"},
+			},
+			{ID: "fix", Title: "Fix", Kind: orchestrator.NodeKindAgent, Prompt: "fix"},
+			{ID: "verify", Title: "Verify", Kind: orchestrator.NodeKindAgent, Prompt: "verify"},
+		},
+		Edges: []orchestrator.WorkflowEdgeDraft{
+			{From: "gate", To: "fix", When: "issues"},
+			{From: "gate", To: "verify", When: "clean"},
+		},
+	}
+
+	response, body := saveWorkflowRequest(t, server.URL, project, "routed", draft, "")
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("save: %d %s", response.StatusCode, body)
+	}
+
+	response, body = request(t, http.MethodGet, projectURL(server.URL, "/api/workflows/routed", project), nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("reopen: %d %s", response.StatusCode, body)
+	}
+	source := decodeWorkflowSource(t, body)
+
+	gate := source.Draft.Nodes[0]
+	if gate.Routes[0] != "clean" || gate.Routes[1] != "issues" {
+		t.Fatalf("routes did not survive the wire: %+v", gate.Routes)
+	}
+	if source.Draft.Edges[0].When != "issues" || source.Draft.Edges[1].When != "clean" {
+		t.Fatalf("conditions did not survive the wire: %+v", source.Draft.Edges)
+	}
+	if !reflect.DeepEqual(source.Draft, draft) {
+		t.Fatalf("reopened draft:\n got: %+v\nwant: %+v", source.Draft, draft)
+	}
+
+	written, err := os.ReadFile(source.Path)
+	if err != nil {
+		t.Fatalf("read saved workflow: %v", err)
+	}
+	for _, fragment := range []string{"routes:", "when: issues", "when: clean"} {
+		if !strings.Contains(string(written), fragment) {
+			t.Fatalf("saved workflow has no %q:\n%s", fragment, written)
+		}
 	}
 }

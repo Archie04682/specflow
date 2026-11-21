@@ -91,7 +91,16 @@ type WorkflowPlan struct {
 	Version     int        `json:"version,omitempty"`
 	Source      string     `json:"source,omitempty"`
 	Nodes       []PlanNode `json:"nodes"`
+	Edges       []PlanEdge `json:"edges,omitempty"`
 	Order       []string   `json:"order"`
+}
+
+// PlanEdge is one authored edge with its condition resolved. An edge with an
+// empty When is taken whenever its source completes.
+type PlanEdge struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+	When string `json:"when,omitempty"`
 }
 
 // PlanNode is one node with its effective values.
@@ -115,9 +124,21 @@ type PlanNode struct {
 	Command         string          `json:"command,omitempty"`
 	RequireApproval bool            `json:"requireApproval,omitempty"`
 	Postcondition   *Postcondition  `json:"postcondition,omitempty"`
+	Routes          map[int]string  `json:"routes,omitempty"`
 }
 
 // Node returns the plan node with an identifier.
 func (p *WorkflowPlan) Node(id string) *PlanNode {
 	return findNode(p.Nodes, id, func(node PlanNode) string { return node.ID })
+}
+
+// Outgoing returns the plan edges leaving a node, in authored order.
+func (p *WorkflowPlan) Outgoing(nodeID string) []PlanEdge {
+	var edges []PlanEdge
+	for _, edge := range p.Edges {
+		if edge.From == nodeID {
+			edges = append(edges, edge)
+		}
+	}
+	return edges
 }

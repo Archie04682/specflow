@@ -19,6 +19,7 @@ import {
   removeEdge,
   removeNode,
   replaceEdge,
+  routeLabels,
   updateNode,
 } from "../../editor/model";
 import type { SkillInfo } from "../../types/skill";
@@ -143,6 +144,9 @@ export function WorkflowEditor({
     draft?.nodes.find((node) => node.id === selectedNodeId) ?? null;
   const selectedEdge =
     draft?.edges.find((edge) => edgeKey(edge) === selectedEdgeKey) ?? null;
+  // The labels the selected edge may choose from: its source declares them.
+  const selectedEdgeConditions =
+    draft && selectedEdge ? routeLabels(draft, selectedEdge.from) : [];
 
   useEffect(() => {
     if (!dirty) return;
@@ -246,13 +250,24 @@ export function WorkflowEditor({
     }
   };
 
-  const changeSelectedEdge = (patch: { from?: string; to?: string }) => {
+  const changeSelectedEdge = (patch: {
+    from?: string;
+    to?: string;
+    when?: string;
+  }) => {
     if (!draft || !selectedEdge) return;
     const next = {
       from: patch.from ?? selectedEdge.from,
       to: patch.to ?? selectedEdge.to,
+      when: patch.when ?? selectedEdge.when,
     };
-    if (next.from === selectedEdge.from && next.to === selectedEdge.to) return;
+    if (
+      next.from === selectedEdge.from &&
+      next.to === selectedEdge.to &&
+      next.when === selectedEdge.when
+    ) {
+      return;
+    }
     const updated = replaceEdge(draft, selectedEdge, next);
     if (!updated) {
       setEdgeError(
@@ -598,6 +613,39 @@ export function WorkflowEditor({
                                 </select>
                               </div>
                             </div>
+                            {selectedEdgeConditions.length > 0 ? (
+                              <div className="field">
+                                <label
+                                  className="field__label"
+                                  htmlFor="edge-when"
+                                >
+                                  Condition
+                                </label>
+                                <select
+                                  id="edge-when"
+                                  className="input"
+                                  value={selectedEdge.when ?? ""}
+                                  onChange={(event) =>
+                                    changeSelectedEdge({
+                                      when: event.target.value,
+                                    })
+                                  }
+                                >
+                                  {selectedEdge.when ? null : (
+                                    // A routing node has no always-taken edge:
+                                    // every outgoing edge names a route.
+                                    <option value="" disabled>
+                                      Choose a route
+                                    </option>
+                                  )}
+                                  {selectedEdgeConditions.map((label) => (
+                                    <option key={label} value={label}>
+                                      {label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            ) : null}
                             {edgeError ? (
                               <p className="field__error" role="alert">
                                 {edgeError}
@@ -665,6 +713,7 @@ export function WorkflowEditor({
                                       >
                                         {nodeTitle(draft, edge.from)} →{" "}
                                         {nodeTitle(draft, edge.to)}
+                                        {edge.when ? ` (${edge.when})` : ""}
                                       </button>
                                       <Button
                                         variant="ghost"

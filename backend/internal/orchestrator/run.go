@@ -59,21 +59,24 @@ var AllNodeStatuses = []NodeStatus{
 
 // NodeRun is one node's record inside a run.
 type NodeRun struct {
-	NodeID       string        `json:"nodeId"`
-	Title        string        `json:"title,omitempty"`
-	Kind         NodeKind      `json:"kind"`
-	Status       NodeStatus    `json:"status"`
-	Attempts     int           `json:"attempts,omitempty"`
-	Text         string        `json:"text,omitempty"`
-	Error        string        `json:"error,omitempty"`
-	FailureClass string        `json:"failureClass,omitempty"`
-	ExitCode     int           `json:"exitCode,omitempty"`
-	Output       string        `json:"output,omitempty"`
-	Command      string        `json:"command,omitempty"`
-	Checkpoint   string        `json:"checkpoint,omitempty"`
-	Usage        harness.Usage `json:"usage,omitempty"`
-	StartedAt    time.Time     `json:"startedAt,omitempty"`
-	EndedAt      *time.Time    `json:"endedAt,omitempty"`
+	NodeID       string     `json:"nodeId"`
+	Title        string     `json:"title,omitempty"`
+	Kind         NodeKind   `json:"kind"`
+	Status       NodeStatus `json:"status"`
+	Attempts     int        `json:"attempts,omitempty"`
+	Text         string     `json:"text,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	FailureClass string     `json:"failureClass,omitempty"`
+	ExitCode     int        `json:"exitCode,omitempty"`
+	Output       string     `json:"output,omitempty"`
+	Command      string     `json:"command,omitempty"`
+	Checkpoint   string     `json:"checkpoint,omitempty"`
+	// Outcome is the route label a routing node completed under. It is the
+	// only record of which edge a completed gate took.
+	Outcome   string        `json:"outcome,omitempty"`
+	Usage     harness.Usage `json:"usage,omitempty"`
+	StartedAt time.Time     `json:"startedAt,omitempty"`
+	EndedAt   *time.Time    `json:"endedAt,omitempty"`
 }
 
 // PendingInteraction is the blocking interaction a run is waiting for. A run
@@ -119,6 +122,8 @@ type Run struct {
 	Checkpoints      map[string]string   `json:"checkpoints,omitempty"`
 	Pending          *PendingInteraction `json:"pending,omitempty"`
 	Injections       []InjectionRecord   `json:"injections,omitempty"`
+	VCS              string              `json:"vcs,omitempty"`
+	Apply            string              `json:"apply,omitempty"`
 	SourceBranch     string              `json:"sourceBranch,omitempty"`
 	BaseCommit       string              `json:"baseCommit,omitempty"`
 	Branch           string              `json:"branch,omitempty"`
@@ -128,6 +133,13 @@ type Run struct {
 	StartedAt        time.Time           `json:"startedAt"`
 	FinishedAt       *time.Time          `json:"finishedAt,omitempty"`
 }
+
+// Folder-run apply states. A git run has no apply: its result is merged.
+const (
+	RunApplyPending   = "pending"
+	RunApplyApplied   = "applied"
+	RunApplyDiscarded = "discarded"
+)
 
 // appendInjection records one clarification, dropping the oldest entries when
 // the bounded history is full.
